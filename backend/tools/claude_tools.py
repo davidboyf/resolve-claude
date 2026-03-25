@@ -1075,4 +1075,82 @@ RESOLVE_TOOLS = [
             "required": ["assembly_plan"],
         },
     },
+
+    # ── DUPLICATE REMOVAL ─────────────────────────────────────────────
+    {
+        "name": "detect_duplicate_clips",
+        "description": (
+            "Scan the timeline for clips that appear more than once. "
+            "Scores each instance and identifies which to keep (best scored) and which to remove. "
+            "Returns actionable groups — pass the groups to remove_duplicate_clips() to execute."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "timeline_info": {
+                    "type": "object",
+                    "description": "Pass the result of get_timeline_info() here",
+                },
+            },
+            "required": ["timeline_info"],
+        },
+    },
+    {
+        "name": "remove_duplicate_clips",
+        "description": (
+            "Remove duplicate clip instances from the timeline, keeping the best-scored one per group. "
+            "Call detect_duplicate_clips() first, then pass its 'groups' array here."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "groups": {
+                    "type": "array",
+                    "description": "The 'groups' array from detect_duplicate_clips()",
+                },
+                "track": {"type": "integer", "default": 1},
+            },
+            "required": ["groups"],
+        },
+    },
+
+    # ── FULL EDIT MODE ────────────────────────────────────────────────
+    {
+        "name": "build_full_edit_plan",
+        "description": (
+            "Generate a complete, ordered edit plan for the current timeline — like a human editor "
+            "sitting down and doing a full pass. Analyzes duplicates, pacing, hook, audio, and returns "
+            "a step-by-step execution plan with exact tool calls and arguments. "
+            "After calling this, execute each step in the plan using the specified tools. "
+            "This is the entry point for Full Edit Mode."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "timeline_info": {
+                    "type": "object",
+                    "description": "Pass the result of get_timeline_info() here",
+                },
+                "brief": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Optional creative brief (e.g. 'wedding highlight reel, emotional, 3 minutes')",
+                },
+                "target_duration": {
+                    "type": "number",
+                    "description": "Optional target duration in seconds",
+                },
+                "music_path": {
+                    "type": "string",
+                    "description": "Optional path to music file for beat-sync editing",
+                },
+                "style": {
+                    "type": "string",
+                    "default": "balanced",
+                    "enum": ["hype", "emotional", "corporate", "documentary", "balanced"],
+                },
+            },
+            "required": ["timeline_info"],
+        },
+    },
 ]

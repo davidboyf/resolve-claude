@@ -2046,3 +2046,51 @@ def assemble_clips_to_timeline(assembly_plan: list, clear_existing: bool = False
         "failed_clips": failed,
         "total_in_plan": len(assembly_plan),
     }
+
+
+def remove_duplicate_clips(groups: list, track: int = 1) -> dict:
+    """
+    Remove duplicate clip instances from the timeline, keeping the best-scored one per group.
+    Pass the 'groups' array from detect_duplicate_clips().
+    """
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+
+    removed = []
+    failed = []
+
+    # Process removals in reverse order so indices don't shift
+    all_removals = []
+    for group in groups:
+        for r in group.get("remove", []):
+            all_removals.append({
+                "track": r.get("track", track),
+                "index": r["index"],
+                "name": group["clip_name"],
+            })
+
+    # Sort by index descending so we delete from end first
+    all_removals.sort(key=lambda x: x["index"], reverse=True)
+
+    for removal in all_removals:
+        clips = timeline.GetItemListInTrack("video", removal["track"]) or []
+        idx = removal["index"]
+        if idx >= len(clips):
+            failed.append({"name": removal["name"], "reason": "index out of range after prior deletions"})
+            continue
+        clip = clips[idx]
+        try:
+            ok = timeline.DeleteClips([clip], True)  # ripple
+            removed.append({"name": removal["name"], "track": removal["track"], "index": idx})
+        except Exception as e:
+            failed.append({"name": removal["name"], "reason": str(e)})
+
+    return {
+        "success": True,
+        "removed": len(removed),
+        "failed": len(failed),
+        "removed_clips": removed,
+        "failed_clips": failed,
+    }

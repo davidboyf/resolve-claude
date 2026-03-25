@@ -520,3 +520,358 @@ def plan_assembly_from_brief(
             "Then call normalize_all_audio",
         ],
     }
+
+
+# ─────────────────────────────────────────────
+#  DUPLICATE DETECTION
+# ─────────────────────────────────────────────
+
+def detect_duplicate_clips(timeline_info: dict) -> dict:
+    """
+    Find clips that appear more than once on the timeline.
+    Groups by name similarity and flags which instance to keep (best scored).
+    Returns actionable list: keep these, delete these.
+    """
+    from collections import defaultdict
+
+    all_clips = []
+    for track in timeline_info.get("video_tracks", []):
+        for i, clip in enumerate(track.get("clips", [])):
+            all_clips.append({
+                **clip,
+                "track": track["track"],
+                "index": i,
+            })
+
+    # Group by normalized name (strip numbers, underscores, extensions)
+    def normalize(name):
+        import re
+        n = re.sub(r'\.\w{2,4}$', '', name)          # remove extension
+        n = re.sub(r'[_\-\s]+', ' ', n).strip().lower()
+        n = re.sub(r'\s+\d+$', '', n)                 # strip trailing numbers
+        return n
+
+    groups = defaultdict(list)
+    for clip in all_clips:
+        key = normalize(clip["name"])
+        groups[key].append(clip)
+
+    duplicates = {k: v for k, v in groups.items() if len(v) > 1}
+
+    if not duplicates:
+        return {
+            "duplicates_found": 0,
+            "message": "No duplicate clips detected on the timeline.",
+            "groups": [],
+        }
+
+    result_groups = []
+    total_to_remove = 0
+
+    for name_key, instances in duplicates.items():
+        # Score each instance: longer trim = more intentional use; earlier position = better for narrative
+        scored_instances = []
+        for inst in instances:
+            score = 50
+            dur = inst.get("duration", 0)
+            start = inst.get("start", 0)
+            # Prefer moderate duration (well-trimmed)
+            if 2 <= dur <= 8:
+                score += 20
+            elif dur < 1:
+                score -= 30
+            # Prefer earlier placement (likely the first considered use)
+            score -= start * 0.1
+            scored_instances.append({**inst, "keep_score": round(score, 1)})
+
+        scored_instances.sort(key=lambda x: x["keep_score"], reverse=True)
+        keeper = scored_instances[0]
+        removals = scored_instances[1:]
+        total_to_remove += len(removals)
+
+        result_groups.append({
+            "clip_name": instances[0]["name"],
+            "normalized_key": name_key,
+            "instance_count": len(instances),
+            "keep": {
+                "track": keeper["track"],
+                "index": keeper["index"],
+                "start": keeper.get("start"),
+                "duration": keeper.get("duration"),
+                "keep_score": keeper["keep_score"],
+            },
+            "remove": [
+                {
+                    "track": r["track"],
+                    "index": r["index"],
+                    "start": r.get("start"),
+                    "duration": r.get("duration"),
+                }
+                for r in removals
+            ],
+        })
+
+    return {
+        "duplicates_found": len(duplicates),
+        "total_to_remove": total_to_remove,
+        "groups": result_groups,
+        "summary": f"Found {len(duplicates)} duplicate clip groups. {total_to_remove} instances can be removed.",
+    }
+
+
+# ─────────────────────────────────────────────
+#  FULL EDIT PLAN
+# ─────────────────────────────────────────────
+
+def build_full_edit_plan(timeline_info: dict, brief: str = "",
+                          target_duration: float = None,
+                          music_path: str = None,
+                          style: str = "balanced") -> dict:
+    """
+    Analyze the timeline and return a complete, ordered edit plan.
+    Claude should execute each step in sequence using the appropriate tools.
+    This is the brain behind Full Edit Mode.
+    """
+    scores = score_clips(timeline_info)
+    hook = analyze_hook_strength(timeline_info)
+    dupes = detect_duplicate_clips(timeline_info)
+
+    video_tracks = timeline_info.get("video_tracks", [])
+    all_clips = []
+    for t in video_tracks:
+        all_clips.extend(t.get("clips", []))
+
+    total_clips = len(all_clips)
+    current_duration = timeline_info.get("duration", 0)
+    fps = timeline_info.get("fps", 24)
+
+    # Estimate issues
+    issues = []
+    short_clips = [c for c in all_clips if c.get("duration", 0) < 0.75]
+    long_clips = [c for c in all_clips if c.get("duration", 0) > 15]
+    cut_clips = [c for c in scores["ranked_clips"] if c["recommendation"] == "cut"]
+
+    if dupes["duplicates_found"] > 0:
+        issues.append(f"{dupes['duplicates_found']} duplicate clip groups — {dupes['total_to_remove']} can be removed")
+    if short_clips:
+        issues.append(f"{len(short_clips)} clips under 0.75s — likely dead air")
+    if hook["hook_score"] < 60:
+        issues.append(f"Weak hook (score {hook['hook_score']}/100) — {'; '.join(hook['issues'][:2])}")
+    if cut_clips:
+        issues.append(f"{len(cut_clips)} clips scored as 'cut' candidates")
+    if long_clips:
+        issues.append(f"{len(long_clips)} clips over 15s — consider trimming")
+
+    # Build ordered step list
+    steps = []
+    step_num = 1
+
+    def add_step(action, tool, args_description, reason, priority="normal"):
+        steps.append({
+            "step": step_num,
+            "action": action,
+            "tool": tool,
+            "args": args_description,
+            "reason": reason,
+            "priority": priority,
+        })
+
+    # Step 1: Always start with full analysis
+    add_step("Read timeline", "get_timeline_info", {}, "Confirm current state", "required")
+    step_num += 1
+
+    # Step 2: Remove duplicates if found
+    if dupes["duplicates_found"] > 0:
+        for group in dupes["groups"]:
+            for removal in group["remove"]:
+                add_step(
+                    f"Remove duplicate: {group['clip_name']}",
+                    "ripple_delete_clip",
+                    {"track": removal["track"], "clip_index": removal["index"]},
+                    f"Keeping best instance at {group['keep']['start']:.1f}s",
+                    "high",
+                )
+                step_num += 1
+
+    # Step 3: Remove dead air / flagged clips
+    if short_clips or cut_clips:
+        add_step(
+            "Flag and clean dead air",
+            "detect_and_cut_silence",
+            {"track": 1, "min_duration_seconds": 0.75},
+            "Remove clips shorter than 0.75s",
+            "high",
+        )
+        step_num += 1
+
+    # Step 4: Remove all gaps
+    add_step("Close all gaps", "ripple_delete_all_gaps",
+             {"track": 1}, "Tighten edit after removals", "high")
+    step_num += 1
+
+    # Step 5: Fix hook if weak
+    if hook["hook_score"] < 60 and scores["ranked_clips"]:
+        best_clip = scores["ranked_clips"][0]
+        add_step(
+            "Strengthen opening",
+            "move_clip_to_position",
+            {"track": best_clip["track"], "clip_index": best_clip["index"], "new_start_seconds": 0},
+            f"Move '{best_clip['name']}' (score {best_clip['score']}) to position 0 for stronger hook",
+            "high",
+        )
+        step_num += 1
+
+    # Step 6: Trim to target if specified
+    if target_duration and current_duration > target_duration * 1.1:
+        add_step(
+            f"Trim to {target_duration}s",
+            "smart_trim_to_duration",
+            {"target_seconds": target_duration, "strategy": "remove_short"},
+            f"Edit is {current_duration:.0f}s, target is {target_duration:.0f}s",
+            "high",
+        )
+        step_num += 1
+
+    # Step 7: Rough cut pass
+    avg_dur = current_duration / max(total_clips, 1)
+    target_clip_dur = min(max(avg_dur * 0.7, 2.0), 6.0)
+    add_step(
+        "Rough cut pass",
+        "auto_rough_cut",
+        {"track": 1, "target_duration_seconds": round(target_clip_dur, 1)},
+        f"Trim clips to ~{target_clip_dur:.1f}s avg for better pacing",
+        "normal",
+    )
+    step_num += 1
+
+    # Step 8: Beat sync if music provided
+    if music_path:
+        add_step(
+            "Detect beats",
+            "detect_beats",
+            {"file_path": music_path},
+            "Get beat timestamps for sync cutting",
+            "high",
+        )
+        step_num += 1
+        add_step(
+            "Cut to beat",
+            "cut_clips_at_beats",
+            {"beat_times": "[use every_2 or every_4 beats from detect_beats result]", "track": 1},
+            "Sync cuts to music rhythm",
+            "high",
+        )
+        step_num += 1
+
+    # Step 9: Visual dynamics
+    add_step(
+        "Add zoom variation",
+        "set_clip_zoom_all",
+        {"track": 1, "scale": 1.12, "alternate": True},
+        "Add subtle punch-in/pan variation across all clips for dynamic feel",
+        "normal",
+    )
+    step_num += 1
+
+    # Step 10: Speed ramp on best clip
+    if scores["ranked_clips"]:
+        hero = scores["ranked_clips"][0]
+        add_step(
+            f"Speed ramp hero clip: {hero['name']}",
+            "apply_speed_ramp",
+            {"track": hero["track"], "clip_index": hero["index"],
+             "ramp_points": [{"position": 0.0, "speed": 1.0},
+                             {"position": 0.4, "speed": 0.3},
+                             {"position": 0.7, "speed": 0.3},
+                             {"position": 1.0, "speed": 1.0}]},
+            "Dramatic slow-motion on the strongest clip",
+            "normal",
+        )
+        step_num += 1
+
+    # Step 11: Grade
+    grade_map = {
+        "hype":       {"contrast": 1.12, "saturation": 1.05, "lift_b": 0.0,  "gain_r": 0.02, "gain_b": -0.01},
+        "emotional":  {"contrast": 1.05, "saturation": 0.82, "lift_b": 0.03, "gain_r": 0.01, "gain_b": 0.0},
+        "corporate":  {"contrast": 1.04, "saturation": 1.0,  "lift_b": 0.0,  "gain_r": 0.0,  "gain_b": 0.0},
+        "documentary":{"contrast": 1.07, "saturation": 0.9,  "lift_b": 0.01, "gain_r": 0.01, "gain_b": 0.0},
+        "balanced":   {"contrast": 1.07, "saturation": 0.93, "lift_b": 0.02, "gain_r": 0.01, "gain_b": -0.01},
+    }
+    grade = grade_map.get(style, grade_map["balanced"])
+    add_step(
+        "Grade all clips",
+        "color_grade_all_clips",
+        {**grade, "track": 1},
+        f"Apply consistent {style} grade across entire edit",
+        "normal",
+    )
+    step_num += 1
+
+    # Step 12: Add cross dissolves
+    add_step(
+        "Add transitions",
+        "apply_cross_dissolve_all",
+        {"track": 1, "duration_seconds": 0.4},
+        "Smooth cuts with short dissolves",
+        "normal",
+    )
+    step_num += 1
+
+    # Step 13: Audio pass
+    audio_tracks = timeline_info.get("audio_tracks", [])
+    if len(audio_tracks) >= 2:
+        add_step(
+            "Duck music under dialogue",
+            "auto_duck_music",
+            {"dialogue_track": 1, "music_track": 2, "normal_music_db": -18.0, "duck_db": -30.0},
+            "Lower music wherever dialogue exists",
+            "normal",
+        )
+        step_num += 1
+
+    add_step(
+        "Normalize all audio",
+        "normalize_all_audio",
+        {"track": 1, "target_db": -12.0},
+        "Broadcast-level audio across all clips",
+        "normal",
+    )
+    step_num += 1
+
+    # Step 14: Final check
+    add_step(
+        "Final hook check",
+        "analyze_hook_strength",
+        {"timeline_info": "[call get_timeline_info() first]"},
+        "Verify opening is strong after edits",
+        "normal",
+    )
+    step_num += 1
+    add_step(
+        "Export edit summary",
+        "export_edit_summary",
+        {"track": 1},
+        "Generate final report of the completed edit",
+        "normal",
+    )
+    step_num += 1
+
+    return {
+        "success": True,
+        "brief": brief or "Full professional edit",
+        "style": style,
+        "current_duration": round(current_duration, 2),
+        "target_duration": target_duration,
+        "total_clips": total_clips,
+        "issues_found": issues,
+        "total_steps": len(steps),
+        "steps": steps,
+        "duplicate_report": dupes,
+        "hook_report": hook,
+        "clip_scores": scores["ranked_clips"][:10],
+        "instruction": (
+            "Execute each step in order using the specified tools. "
+            "After each destructive step (delete/trim), call get_timeline_info() to confirm state. "
+            "Report progress after every 3-4 steps."
+        ),
+    }

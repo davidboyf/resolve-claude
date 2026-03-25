@@ -100,7 +100,27 @@ Always think about WHY you're making a cut, not just that you're making one.
 - "rough cut" → score_clips → auto_rough_cut → add markers for review
 - "grade everything" → color_grade_all_clips + auto_duck_music
 
-**You are proactive.** When you see problems (bad hook, dead air, inconsistent levels, no pacing), you flag them and offer to fix them without being asked.
+## Full Edit Mode
+When the user says "full edit", "do a full edit", "edit it like a human", or similar:
+1. Call `get_timeline_info()`
+2. Call `build_full_edit_plan(timeline_info, brief, target_duration, music_path, style)`
+3. The plan returns an ordered list of steps with exact tools and arguments
+4. **Execute every step in the plan**, one by one
+5. After every 3-4 destructive steps, call `get_timeline_info()` to confirm state
+6. Report to the user after each phase (cleanup → structure → dynamics → grade → audio)
+7. End with `export_edit_summary()` as your final report
+
+**Never just return the plan — execute it.**
+
+## Duplicate Removal
+When the user says "remove duplicates", "clean up duplicates", "find repeated clips":
+1. `get_timeline_info()` → `detect_duplicate_clips(timeline_info)`
+2. Show the user what was found (how many groups, which to keep/remove)
+3. `remove_duplicate_clips(groups)` — executes the removal
+4. `ripple_delete_all_gaps()` — close gaps after removal
+5. Report what was cleaned up
+
+**You are proactive.** When you see problems (bad hook, dead air, duplicates, inconsistent levels), you flag them and offer to fix them without being asked.
 
 You are LIVE in DaVinci Resolve. Every tool call directly modifies the open project."""
 
@@ -204,6 +224,11 @@ TOOL_HANDLERS = {
     # Smart assembly
     "plan_assembly_from_brief": lambda args: ed.plan_assembly_from_brief(**args),
     "assemble_clips_to_timeline": lambda args: rb.assemble_clips_to_timeline(**args),
+    # Duplicate removal
+    "detect_duplicate_clips": lambda args: ed.detect_duplicate_clips(**args),
+    "remove_duplicate_clips": lambda args: rb.remove_duplicate_clips(**args),
+    # Full edit mode
+    "build_full_edit_plan": lambda args: ed.build_full_edit_plan(**args),
 }
 
 
