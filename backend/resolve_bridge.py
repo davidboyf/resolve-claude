@@ -206,10 +206,15 @@ def split_clip_at(time_seconds: float, track: int = 1) -> dict:
     if hasattr(target, "Split"):
         ok = target.Split()
     else:
-        # Fallback: set out point of current clip then add cut
-        ok = False
+        # Fallback for older Resolve: use timeline's razor via SetCurrentTimecodeByFrame + action
+        try:
+            timeline.SetCurrentTimecodeByFrame(frame + timeline.GetStartFrame())
+            # Attempt via project scripting API razor action
+            ok = resolve.GetProjectManager().GetCurrentProject().GetCurrentTimeline().Split()
+        except Exception:
+            ok = False
 
-    return {"success": ok, "time": time_seconds, "track": track}
+    return {"success": bool(ok), "time": time_seconds, "track": track}
 
 
 def delete_clips_in_range(start_seconds: float, end_seconds: float, track: int = 1) -> dict:
@@ -528,3 +533,351 @@ def get_media_pool_clips() -> list:
         return result
 
     return collect(root)
+
+
+# ─────────────────────────────────────────────
+#  NEW: COLOR GRADE READ
+# ─────────────────────────────────────────────
+
+def get_clip_grade(track: int = 1, clip_index: int = 0) -> dict:
+    """Read the current color grade values for a clip (wheels, contrast, saturation)."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index >= len(clips):
+        return {"error": "Clip not found"}
+    clip = clips[clip_index]
+    resolve.OpenPage("color")
+
+    def safe_get(prop):
+        try:
+            return clip.GetProperty(prop)
+        except Exception:
+            return None
+
+    return {
+        "clip": clip.GetName(),
+        "track": track,
+        "index": clip_index,
+        "lift":     safe_get("ColorWheelLift"),
+        "gamma":    safe_get("ColorWheelGamma"),
+        "gain":     safe_get("ColorWheelGain"),
+        "offset":   safe_get("ColorWheelOffset"),
+        "contrast":    safe_get("Contrast"),
+        "saturation":  safe_get("Saturation"),
+        "hue":         safe_get("Hue"),
+        "luma_mix":    safe_get("LumaContribution"),
+    }
+
+
+# ─────────────────────────────────────────────
+#  NEW: TIMELINE SWITCHING
+# ─────────────────────────────────────────────
+
+def list_timelines() -> list:
+    """List all timelines in the current project."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    fps_val = None
+    result = []
+    for i in range(1, project.GetTimelineCount() + 1):
+        t = project.GetTimelineByIndex(i)
+        try:
+            fps_val = float(t.GetSetting("timelineFrameRate"))
+        except Exception:
+            fps_val = None
+        result.append({
+            "index": i,
+            "name": t.GetName(),
+            "fps": fps_val,
+            "is_current": t.GetName() == project.GetCurrentTimeline().GetName(),
+        })
+    return result
+
+
+def switch_timeline(name: str) -> dict:
+    """Switch the active timeline by name."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    for i in range(1, project.GetTimelineCount() + 1):
+        t = project.GetTimelineByIndex(i)
+        if t.GetName() == name:
+            ok = project.SetCurrentTimeline(t)
+            return {"success": bool(ok), "timeline": name}
+    return {"success": False, "error": f"Timeline '{name}' not found"}
+
+
+# ─────────────────────────────────────────────
+#  NEW: TRANSITIONS
+# ─────────────────────────────────────────────
+
+def add_transition(
+    clip_index: int,
+    transition_type: str = "Cross Dissolve",
+    duration_frames: int = 24,
+    position: str = "end",
+    track: int = 1,
+) -> dict:
+    """
+    Add a transition to a clip.
+    transition_type: 'Cross Dissolve', 'Dip to Color Dissolve', 'Dip to Black'
+    position: 'start' | 'end' | 'both'
+    duration_frames: length of transition in frames
+    """
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index >= len(clips):
+        return {"error": "Clip index out of range"}
+
+    clip = clips[clip_index]
+    resolve.OpenPage("edit")
+
+    results = []
+    if position in ("end", "both") and clip_index + 1 < len(clips):
+        ok = timeline.AddTransition(transition_type, clip, clips[clip_index + 1], duration_frames)
+        results.append({"edge": "end", "success": bool(ok)})
+    if position in ("start", "both") and clip_index > 0:
+        ok = timeline.AddTransition(transition_type, clips[clip_index - 1], clip, duration_frames)
+        results.append({"edge": "start", "success": bool(ok)})
+    if not results:
+        return {"success": False, "error": "No adjacent clips to add transition to"}
+
+    return {
+        "success": any(r["success"] for r in results),
+        "transitions": results,
+        "type": transition_type,
+        "duration_frames": duration_frames,
+    }
+
+
+# ─────────────────────────────────────────────
+#  NEW: COPY GRADE
+# ─────────────────────────────────────────────
+
+def copy_grade_to_clips(
+    source_track: int = 1,
+    source_clip_index: int = 0,
+    target_track: int = 1,
+    target_clip_indices: Optional[list] = None,
+) -> dict:
+    """Copy the color grade from one clip to one or more other clips."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+
+    src_clips = timeline.GetItemListInTrack("video", source_track) or []
+    if source_clip_index >= len(src_clips):
+        return {"error": "Source clip not found"}
+
+    source_clip = src_clips[source_clip_index]
+    resolve.OpenPage("color")
+
+    if target_clip_indices is None:
+        target_clip_indices = []
+
+    tgt_clips = timeline.GetItemListInTrack("video", target_track) or []
+    copied = []
+    failed = []
+
+    for idx in target_clip_indices:
+        if idx >= len(tgt_clips):
+            failed.append({"index": idx, "reason": "out of range"})
+            continue
+        target_clip = tgt_clips[idx]
+        try:
+            # Copy via ApplyGradeFromVersion (Resolve Studio API)
+            ok = target_clip.ApplyGradeFromVersion(source_clip, 0)
+            if ok:
+                copied.append(target_clip.GetName())
+            else:
+                failed.append({"index": idx, "reason": "API returned False"})
+        except Exception as e:
+            failed.append({"index": idx, "reason": str(e)})
+
+    return {
+        "success": len(copied) > 0,
+        "source": source_clip.GetName(),
+        "copied_to": copied,
+        "failed": failed,
+    }
+
+
+# ─────────────────────────────────────────────
+#  NEW: RENDER STATUS
+# ─────────────────────────────────────────────
+
+def get_render_status() -> dict:
+    """Get the current render job queue and their statuses."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+
+    is_rendering = project.IsRenderingInProgress()
+    jobs = project.GetRenderJobList() or []
+
+    job_list = []
+    for job in jobs:
+        job_id = job.get("JobId", "")
+        status_info = project.GetRenderJobStatus(job_id) if job_id else {}
+        job_list.append({
+            "job_id": job_id,
+            "timeline": job.get("TimelineName", ""),
+            "preset": job.get("RenderPreset", ""),
+            "output": job.get("TargetDir", ""),
+            "status": status_info.get("JobStatus", "Unknown"),
+            "completion": status_info.get("CompletionPercentage", 0),
+            "error": status_info.get("Error", ""),
+        })
+
+    return {
+        "is_rendering": is_rendering,
+        "job_count": len(job_list),
+        "jobs": job_list,
+    }
+
+
+def cancel_render() -> dict:
+    """Stop all in-progress render jobs."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    ok = project.StopRendering()
+    return {"success": bool(ok), "message": "Render stopped."}
+
+
+def delete_render_job(job_id: str) -> dict:
+    """Delete a render job from the queue by ID."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    ok = project.DeleteRenderJobByUniqueId(job_id)
+    return {"success": bool(ok), "job_id": job_id}
+
+
+# ─────────────────────────────────────────────
+#  NEW: TRANSCRIBE AS RESOLVE TOOL
+# ─────────────────────────────────────────────
+
+def transcribe_clip_file(
+    file_path: str,
+    language: str = "en",
+    model_size: str = "base",
+) -> dict:
+    """
+    Transcribe a video/audio file using Whisper.
+    Returns full transcript text + timestamped segments.
+    Useful for deciding where to cut based on speech content.
+    """
+    from transcribe import transcribe, format_transcript_for_claude
+    result = transcribe(file_path, language, model_size)
+    result["formatted"] = format_transcript_for_claude(result)
+    return result
+
+
+def apply_transcript_markers(
+    file_path: str,
+    mode: str = "silence",
+    language: str = "en",
+    model_size: str = "base",
+) -> dict:
+    """
+    Transcribe a file and auto-apply markers to the current timeline.
+    mode='silence' — Red markers on gaps between speech segments (silence/dead air).
+    mode='segments' — Blue markers at the start of each spoken segment.
+    """
+    from transcribe import transcribe
+
+    result = transcribe(file_path, language, model_size)
+    segments = result.get("segments", [])
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+
+    added = []
+
+    if mode == "segments":
+        for seg in segments:
+            frame = int(seg["start"] * fps) + timeline.GetStartFrame()
+            text_snippet = seg["text"][:40].strip()
+            ok = timeline.AddMarker(
+                int(seg["start"] * fps), "Blue", "Speech", text_snippet, 1
+            )
+            if ok:
+                added.append({"time": seg["start"], "text": text_snippet})
+
+    elif mode == "silence":
+        # Mark gaps > 0.5s between segments as silence
+        prev_end = 0.0
+        for seg in segments:
+            gap = seg["start"] - prev_end
+            if gap > 0.5:
+                frame = int(prev_end * fps)
+                ok = timeline.AddMarker(frame, "Red", "Silence", f"{gap:.1f}s gap", int(gap * fps))
+                if ok:
+                    added.append({"time": prev_end, "duration": gap})
+            prev_end = seg["end"]
+
+    return {
+        "success": True,
+        "mode": mode,
+        "markers_added": len(added),
+        "markers": added,
+        "total_segments": len(segments),
+        "duration": result.get("duration", 0),
+    }
+
+
+# ─────────────────────────────────────────────
+#  NEW: SPEED RAMP
+# ─────────────────────────────────────────────
+
+def set_clip_speed(
+    clip_index: int,
+    speed_percent: float = 100.0,
+    track: int = 1,
+) -> dict:
+    """Set the playback speed of a video clip. 100=normal, 50=half speed, 200=2x speed."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index >= len(clips):
+        return {"error": "Clip not found"}
+    clip = clips[clip_index]
+    ok = clip.SetProperty("Speed", speed_percent)
+    return {
+        "success": bool(ok),
+        "clip": clip.GetName(),
+        "speed_percent": speed_percent,
+    }
+
+
+# ─────────────────────────────────────────────
+#  NEW: CLIP FLAGS
+# ─────────────────────────────────────────────
+
+def flag_clip(clip_index: int, flag_color: str = "Red", track: int = 1) -> dict:
+    """Add a flag to a clip. flag_color: Red, Green, Blue, Cyan, Magenta, Yellow."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index >= len(clips):
+        return {"error": "Clip not found"}
+    clip = clips[clip_index]
+    clip.AddFlag(flag_color)
+    return {"success": True, "clip": clip.GetName(), "flag": flag_color}
+
+
+def unflag_clip(clip_index: int, flag_color: str = "Red", track: int = 1) -> dict:
+    """Remove a flag from a clip."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index >= len(clips):
+        return {"error": "Clip not found"}
+    clip = clips[clip_index]
+    clip.ClearFlags(flag_color)
+    return {"success": True, "clip": clip.GetName(), "flag": flag_color}

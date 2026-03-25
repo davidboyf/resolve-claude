@@ -157,6 +157,14 @@ async def set_playhead(req: PlayheadRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/timeline/marker/delete")
+async def delete_marker(req: PlayheadRequest):
+    try:
+        return rb.delete_marker(req.time_seconds)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/timeline/switch-page/{page}")
 async def switch_page(page: str):
     try:
@@ -209,10 +217,63 @@ async def get_render_presets():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/render/status")
+async def get_render_status():
+    try:
+        return rb.get_render_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/render/start")
 async def start_render(req: RenderRequest):
     try:
         return rb.start_render(req.preset_name, req.output_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/render/cancel")
+async def cancel_render():
+    try:
+        return rb.cancel_render()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────
+#  TIMELINES
+# ─────────────────────────────────────────────
+
+@app.get("/api/timelines")
+async def list_timelines():
+    try:
+        return rb.list_timelines()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/timelines/switch/{name}")
+async def switch_timeline(name: str):
+    try:
+        return rb.switch_timeline(name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────
+#  COLOR GRADE
+# ─────────────────────────────────────────────
+
+class ClipSelector(BaseModel):
+    track: int = 1
+    clip_index: int = 0
+
+
+@app.post("/api/color/grade")
+async def get_clip_grade(req: ClipSelector):
+    try:
+        return rb.get_clip_grade(req.track, req.clip_index)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

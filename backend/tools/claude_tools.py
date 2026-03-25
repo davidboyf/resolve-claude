@@ -15,6 +15,22 @@ RESOLVE_TOOLS = [
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
+        "name": "list_timelines",
+        "description": "List all timelines in the current project with their names and FPS.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "switch_timeline",
+        "description": "Switch the active timeline to a different one by name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Exact name of the timeline to switch to"},
+            },
+            "required": ["name"],
+        },
+    },
+    {
         "name": "switch_page",
         "description": "Switch DaVinci Resolve to a specific page/workspace.",
         "input_schema": {
@@ -54,7 +70,7 @@ RESOLVE_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "time_seconds": {"type": "number", "description": "Timestamp in seconds"}
+                "time_seconds": {"type": "number"}
             },
             "required": ["time_seconds"],
         },
@@ -65,7 +81,7 @@ RESOLVE_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "time_seconds": {"type": "number", "description": "Timestamp in seconds to jump to"}
+                "time_seconds": {"type": "number"}
             },
             "required": ["time_seconds"],
         },
@@ -76,21 +92,21 @@ RESOLVE_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "time_seconds": {"type": "number", "description": "Where to make the cut (seconds)"},
-                "track": {"type": "integer", "default": 1, "description": "Video track number (1-based)"},
+                "time_seconds": {"type": "number"},
+                "track": {"type": "integer", "default": 1},
             },
             "required": ["time_seconds"],
         },
     },
     {
         "name": "delete_clips_in_range",
-        "description": "Delete all video clips within a time range on a track. Use this to remove dead air, bad takes, or unwanted sections.",
+        "description": "Delete all video clips within a time range on a track. Use to remove dead air, bad takes, or unwanted sections.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "start_seconds": {"type": "number", "description": "Range start in seconds"},
-                "end_seconds": {"type": "number", "description": "Range end in seconds"},
-                "track": {"type": "integer", "default": 1, "description": "Video track number (1-based)"},
+                "start_seconds": {"type": "number"},
+                "end_seconds": {"type": "number"},
+                "track": {"type": "integer", "default": 1},
             },
             "required": ["start_seconds", "end_seconds"],
         },
@@ -102,10 +118,7 @@ RESOLVE_TOOLS = [
             "type": "object",
             "properties": {
                 "clip_name": {"type": "string"},
-                "color": {
-                    "type": "string",
-                    "description": "Orange, Apricot, Yellow, Lime, Green, Teal, Navy, Blue, Purple, Violet, Pink, Tan, Beige, Brown, Chocolate",
-                },
+                "color": {"type": "string", "description": "Orange, Apricot, Yellow, Lime, Green, Teal, Navy, Blue, Purple, Violet, Pink, Tan, Beige, Brown, Chocolate"},
                 "track": {"type": "integer", "default": 1},
             },
             "required": ["clip_name", "color"],
@@ -117,43 +130,105 @@ RESOLVE_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "media_path": {"type": "string", "description": "Absolute path to the media file"},
-                "start_seconds": {"type": "number", "description": "In-point in the source clip (seconds)", "default": 0},
-                "end_seconds": {"type": "number", "description": "Out-point in the source clip (seconds, optional)"},
+                "media_path": {"type": "string"},
+                "start_seconds": {"type": "number", "default": 0},
+                "end_seconds": {"type": "number"},
             },
             "required": ["media_path"],
         },
     },
     {
         "name": "get_media_pool_clips",
-        "description": "List all clips currently in the DaVinci Resolve media pool with their file paths, duration, and resolution.",
+        "description": "List all clips currently in the DaVinci Resolve media pool with file paths, duration, and resolution.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
-    # ── COLOR GRADING ─────────────────────────────────────────────────
     {
-        "name": "apply_color_wheel",
-        "description": "Adjust the Lift, Gamma, Gain, or Offset color wheel on a clip. Use to shift shadows, mids, highlights, or overall color cast. Values -1.0 to 1.0 (0 = no change).",
+        "name": "add_transition",
+        "description": "Add a transition between two adjacent clips. Types: 'Cross Dissolve', 'Dip to Color Dissolve', 'Dip to Black'.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "wheel": {
-                    "type": "string",
-                    "description": "Which wheel to adjust: lift (shadows), gamma (mids), gain (highlights), offset (all)",
-                    "enum": ["lift", "gamma", "gain", "offset"],
-                },
-                "red": {"type": "number", "default": 0.0, "description": "-1.0 to 1.0"},
-                "green": {"type": "number", "default": 0.0, "description": "-1.0 to 1.0"},
-                "blue": {"type": "number", "default": 0.0, "description": "-1.0 to 1.0"},
-                "luma": {"type": "number", "default": 0.0, "description": "Master luminance offset -1.0 to 1.0"},
+                "clip_index": {"type": "integer", "description": "0-based index of the clip to add the transition to"},
+                "transition_type": {"type": "string", "default": "Cross Dissolve", "description": "Cross Dissolve, Dip to Color Dissolve, Dip to Black"},
+                "duration_frames": {"type": "integer", "default": 24, "description": "Length in frames"},
+                "position": {"type": "string", "default": "end", "enum": ["start", "end", "both"]},
                 "track": {"type": "integer", "default": 1},
-                "clip_index": {"type": "integer", "default": 0, "description": "0-based clip index on the track"},
+            },
+            "required": ["clip_index"],
+        },
+    },
+    {
+        "name": "set_clip_speed",
+        "description": "Set the playback speed of a video clip. 100=normal, 50=half speed, 200=double speed.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "clip_index": {"type": "integer"},
+                "speed_percent": {"type": "number", "default": 100.0},
+                "track": {"type": "integer", "default": 1},
+            },
+            "required": ["clip_index", "speed_percent"],
+        },
+    },
+    {
+        "name": "flag_clip",
+        "description": "Add a colored flag to a clip. flag_color: Red, Green, Blue, Cyan, Magenta, Yellow.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "clip_index": {"type": "integer"},
+                "flag_color": {"type": "string", "default": "Red"},
+                "track": {"type": "integer", "default": 1},
+            },
+            "required": ["clip_index"],
+        },
+    },
+    {
+        "name": "unflag_clip",
+        "description": "Remove a flag from a clip.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "clip_index": {"type": "integer"},
+                "flag_color": {"type": "string", "default": "Red"},
+                "track": {"type": "integer", "default": 1},
+            },
+            "required": ["clip_index"],
+        },
+    },
+    # ── COLOR GRADING ─────────────────────────────────────────────────
+    {
+        "name": "get_clip_grade",
+        "description": "Read the current color grade values for a clip: Lift/Gamma/Gain/Offset wheels, contrast, saturation. Call this before modifying a grade to understand the current state.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+                "clip_index": {"type": "integer", "default": 0},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "apply_color_wheel",
+        "description": "Adjust the Lift, Gamma, Gain, or Offset color wheel on a clip. Values -1.0 to 1.0 (0 = no change). Lift=shadows, Gamma=mids, Gain=highlights, Offset=all.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "wheel": {"type": "string", "enum": ["lift", "gamma", "gain", "offset"]},
+                "red": {"type": "number", "default": 0.0},
+                "green": {"type": "number", "default": 0.0},
+                "blue": {"type": "number", "default": 0.0},
+                "luma": {"type": "number", "default": 0.0, "description": "Master luminance offset"},
+                "track": {"type": "integer", "default": 1},
+                "clip_index": {"type": "integer", "default": 0},
             },
             "required": ["wheel"],
         },
     },
     {
         "name": "set_contrast_saturation",
-        "description": "Set contrast and saturation on a clip. 1.0 = normal/no change. Contrast range 0.0-2.0, Saturation range 0.0-2.0.",
+        "description": "Set contrast (0.0-2.0, 1.0=normal) and saturation (0.0-2.0, 1.0=normal) on a clip.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -171,7 +246,7 @@ RESOLVE_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "lut_path": {"type": "string", "description": "Absolute path to the .cube LUT file"},
+                "lut_path": {"type": "string", "description": "Absolute path to .cube LUT file"},
                 "track": {"type": "integer", "default": 1},
                 "clip_index": {"type": "integer", "default": 0},
             },
@@ -180,11 +255,11 @@ RESOLVE_TOOLS = [
     },
     {
         "name": "add_serial_node",
-        "description": "Add a new serial correction node to a clip's color node graph.",
+        "description": "Add a new serial color correction node to a clip's node graph.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "label": {"type": "string", "default": "New Node", "description": "Label for the node"},
+                "label": {"type": "string", "default": "New Node"},
                 "track": {"type": "integer", "default": 1},
                 "clip_index": {"type": "integer", "default": 0},
             },
@@ -203,15 +278,33 @@ RESOLVE_TOOLS = [
             "required": [],
         },
     },
-    # ── AUDIO ─────────────────────────────────────────────────────────
     {
-        "name": "set_audio_track_volume",
-        "description": "Set the volume of an entire audio track in dB. 0 dB = unity gain. Use negative values to reduce volume.",
+        "name": "copy_grade_to_clips",
+        "description": "Copy the color grade from one clip to one or more other clips.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "track": {"type": "integer", "description": "Audio track number (1-based)"},
-                "volume_db": {"type": "number", "description": "Volume in dB. 0 = unity, -6 = half, -∞ = silent"},
+                "source_track": {"type": "integer", "default": 1},
+                "source_clip_index": {"type": "integer", "default": 0},
+                "target_track": {"type": "integer", "default": 1},
+                "target_clip_indices": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "List of 0-based clip indices to copy the grade to",
+                },
+            },
+            "required": ["target_clip_indices"],
+        },
+    },
+    # ── AUDIO ─────────────────────────────────────────────────────────
+    {
+        "name": "set_audio_track_volume",
+        "description": "Set the volume of an audio track in dB. 0=unity, -6=half, negative=quieter.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer"},
+                "volume_db": {"type": "number"},
             },
             "required": ["track", "volume_db"],
         },
@@ -241,10 +334,48 @@ RESOLVE_TOOLS = [
             "required": ["clip_name", "volume_db"],
         },
     },
+    # ── TRANSCRIPTION ─────────────────────────────────────────────────
+    {
+        "name": "transcribe_clip_file",
+        "description": "Transcribe a video or audio file using Whisper AI to get the full spoken text with timestamps. Use this to understand what's being said and decide where to cut.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "Absolute path to video or audio file"},
+                "language": {"type": "string", "default": "en"},
+                "model_size": {
+                    "type": "string",
+                    "default": "base",
+                    "description": "tiny (fastest), base, small, medium, large (most accurate)",
+                    "enum": ["tiny", "base", "small", "medium", "large"],
+                },
+            },
+            "required": ["file_path"],
+        },
+    },
+    {
+        "name": "apply_transcript_markers",
+        "description": "Transcribe a file and automatically add markers to the timeline. mode='silence' adds Red markers on silent gaps; mode='segments' adds Blue markers at each speech segment start.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string"},
+                "mode": {"type": "string", "default": "silence", "enum": ["silence", "segments"]},
+                "language": {"type": "string", "default": "en"},
+                "model_size": {"type": "string", "default": "base", "enum": ["tiny", "base", "small", "medium", "large"]},
+            },
+            "required": ["file_path"],
+        },
+    },
     # ── RENDER ────────────────────────────────────────────────────────
     {
         "name": "get_render_presets",
         "description": "List all available render presets in the current project.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_render_status",
+        "description": "Get the current render job queue with status and completion percentage for each job.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
@@ -253,11 +384,16 @@ RESOLVE_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "preset_name": {"type": "string", "description": "Name of the render preset to use"},
-                "output_path": {"type": "string", "description": "Absolute directory path for output file"},
+                "preset_name": {"type": "string"},
+                "output_path": {"type": "string", "description": "Absolute directory path for output"},
             },
             "required": ["preset_name", "output_path"],
         },
+    },
+    {
+        "name": "cancel_render",
+        "description": "Stop all in-progress render jobs.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     # ── FUSION ────────────────────────────────────────────────────────
     {

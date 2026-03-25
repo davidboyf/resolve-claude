@@ -37,9 +37,13 @@ When the user asks you to do something vague:
 Remember: You are LIVE inside DaVinci Resolve. Every tool call directly affects the open project."""
 
 TOOL_HANDLERS = {
+    # Project / navigation
     "get_project_info": lambda args: rb.get_project_info(),
     "get_timeline_info": lambda args: rb.get_timeline_info(),
+    "list_timelines": lambda args: rb.list_timelines(),
+    "switch_timeline": lambda args: rb.switch_timeline(**args),
     "switch_page": lambda args: rb.switch_page(**args),
+    # Timeline / editing
     "add_marker": lambda args: rb.add_marker(**args),
     "delete_marker": lambda args: rb.delete_marker(**args),
     "set_playhead": lambda args: rb.set_playhead(**args),
@@ -48,16 +52,31 @@ TOOL_HANDLERS = {
     "set_clip_color": lambda args: rb.set_clip_color(**args),
     "add_clip_to_timeline": lambda args: rb.add_clip_to_timeline(**args),
     "get_media_pool_clips": lambda args: rb.get_media_pool_clips(),
+    "add_transition": lambda args: rb.add_transition(**args),
+    "set_clip_speed": lambda args: rb.set_clip_speed(**args),
+    "flag_clip": lambda args: rb.flag_clip(**args),
+    "unflag_clip": lambda args: rb.unflag_clip(**args),
+    # Color grading
+    "get_clip_grade": lambda args: rb.get_clip_grade(**args),
     "apply_color_wheel": lambda args: rb.apply_color_wheel(**args),
     "set_contrast_saturation": lambda args: rb.set_contrast_saturation(**args),
     "apply_lut": lambda args: rb.apply_lut(**args),
     "add_serial_node": lambda args: rb.add_serial_node(**args),
     "reset_grade": lambda args: rb.reset_grade(**args),
+    "copy_grade_to_clips": lambda args: rb.copy_grade_to_clips(**args),
+    # Audio
     "set_audio_track_volume": lambda args: rb.set_audio_track_volume(**args),
     "mute_audio_track": lambda args: rb.mute_audio_track(**args),
     "set_clip_audio_volume": lambda args: rb.set_clip_audio_volume(**args),
+    # Transcription
+    "transcribe_clip_file": lambda args: rb.transcribe_clip_file(**args),
+    "apply_transcript_markers": lambda args: rb.apply_transcript_markers(**args),
+    # Render
     "get_render_presets": lambda args: rb.get_render_presets(),
+    "get_render_status": lambda args: rb.get_render_status(),
     "start_render": lambda args: rb.start_render(**args),
+    "cancel_render": lambda args: rb.cancel_render(),
+    # Fusion
     "open_fusion_for_clip": lambda args: rb.open_fusion_for_clip(**args),
 }
 

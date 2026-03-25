@@ -1,15 +1,29 @@
 import { useState } from 'react'
 import {
-  MessageSquare, Film, HardDrive, LayoutGrid
+  MessageSquare, Film, HardDrive, Palette,
+  Music, Rocket, Mic, LayoutGrid
 } from 'lucide-react'
 import { ChatPanel } from './components/ChatPanel'
 import { TimelinePanel } from './components/TimelinePanel'
 import { MediaPoolPanel } from './components/MediaPoolPanel'
+import { ColorGradePanel } from './components/ColorGradePanel'
+import { AudioMixerPanel } from './components/AudioMixerPanel'
+import { RenderPanel } from './components/RenderPanel'
+import { TranscribePanel } from './components/TranscribePanel'
 import { StatusBar } from './components/StatusBar'
 import clsx from 'clsx'
 
-type RightTab = 'timeline' | 'media'
+type RightTab = 'timeline' | 'media' | 'color' | 'audio' | 'render' | 'transcribe'
 type Layout = 'chat' | 'split'
+
+const RIGHT_TABS: { id: RightTab; label: string; icon: React.ReactNode; color: string }[] = [
+  { id: 'timeline', label: 'Timeline', icon: <Film size={12} />, color: 'text-blue-400' },
+  { id: 'media', label: 'Media', icon: <HardDrive size={12} />, color: 'text-gray-400' },
+  { id: 'color', label: 'Color', icon: <Palette size={12} />, color: 'text-purple-400' },
+  { id: 'audio', label: 'Audio', icon: <Music size={12} />, color: 'text-green-400' },
+  { id: 'render', label: 'Render', icon: <Rocket size={12} />, color: 'text-orange-400' },
+  { id: 'transcribe', label: 'Transcribe', icon: <Mic size={12} />, color: 'text-cyan-400' },
+]
 
 const LOGO = (
   <div className="flex items-center gap-2">
@@ -21,6 +35,17 @@ const LOGO = (
     </span>
   </div>
 )
+
+function RightPanel({ tab }: { tab: RightTab }) {
+  switch (tab) {
+    case 'timeline': return <TimelinePanel />
+    case 'media': return <MediaPoolPanel />
+    case 'color': return <ColorGradePanel />
+    case 'audio': return <AudioMixerPanel />
+    case 'render': return <RenderPanel />
+    case 'transcribe': return <TranscribePanel />
+  }
+}
 
 export default function App() {
   const [layout, setLayout] = useState<Layout>('split')
@@ -43,7 +68,7 @@ export default function App() {
             )}
           >
             <MessageSquare size={12} />
-            Chat only
+            Chat
           </button>
           <button
             onClick={() => setLayout('split')}
@@ -59,9 +84,7 @@ export default function App() {
           </button>
         </div>
 
-        <div className="text-[10px] text-gray-600 font-mono">
-          {/* placeholder for future info */}
-        </div>
+        <div className="w-28" />
       </div>
 
       {/* Main content */}
@@ -69,46 +92,37 @@ export default function App() {
         {/* Left: Chat */}
         <div
           className={clsx(
-            'flex flex-col border-r border-resolve-border overflow-hidden transition-all',
-            layout === 'split' ? 'w-[55%]' : 'flex-1'
+            'flex flex-col border-r border-resolve-border overflow-hidden',
+            layout === 'split' ? 'w-[52%]' : 'flex-1'
           )}
         >
           <ChatPanel />
         </div>
 
-        {/* Right: Timeline / Media Pool */}
+        {/* Right: Tool panels */}
         {layout === 'split' && (
           <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Right tab bar */}
-            <div className="flex items-center border-b border-resolve-border bg-resolve-panel shrink-0">
-              <button
-                onClick={() => setRightTab('timeline')}
-                className={clsx(
-                  'flex items-center gap-1.5 px-4 py-2.5 text-xs border-b-2 transition-all',
-                  rightTab === 'timeline'
-                    ? 'border-resolve-accent text-white'
-                    : 'border-transparent text-gray-500 hover:text-gray-300'
-                )}
-              >
-                <Film size={12} />
-                Timeline
-              </button>
-              <button
-                onClick={() => setRightTab('media')}
-                className={clsx(
-                  'flex items-center gap-1.5 px-4 py-2.5 text-xs border-b-2 transition-all',
-                  rightTab === 'media'
-                    ? 'border-resolve-accent text-white'
-                    : 'border-transparent text-gray-500 hover:text-gray-300'
-                )}
-              >
-                <HardDrive size={12} />
-                Media Pool
-              </button>
+            {/* Tab bar */}
+            <div className="flex items-center border-b border-resolve-border bg-resolve-panel shrink-0 overflow-x-auto">
+              {RIGHT_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setRightTab(tab.id)}
+                  className={clsx(
+                    'flex items-center gap-1.5 px-3.5 py-2.5 text-xs border-b-2 whitespace-nowrap transition-all shrink-0',
+                    rightTab === tab.id
+                      ? `border-resolve-accent ${tab.color}`
+                      : 'border-transparent text-gray-600 hover:text-gray-400'
+                  )}
+                >
+                  {tab.icon}
+                  {tab.label}
+                </button>
+              ))}
             </div>
 
             <div className="flex-1 overflow-hidden">
-              {rightTab === 'timeline' ? <TimelinePanel /> : <MediaPoolPanel />}
+              <RightPanel tab={rightTab} />
             </div>
           </div>
         )}
