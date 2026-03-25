@@ -881,3 +881,454 @@ def unflag_clip(clip_index: int, flag_color: str = "Red", track: int = 1) -> dic
     clip = clips[clip_index]
     clip.ClearFlags(flag_color)
     return {"success": True, "clip": clip.GetName(), "flag": flag_color}
+
+
+# ─────────────────────────────────────────────
+#  SCREEN CAPTURE / VISUAL FEEDBACK
+# ─────────────────────────────────────────────
+
+def capture_screen() -> dict:
+    """Take a screenshot so Claude can visually see what's on the DaVinci Resolve screen."""
+    from screen_capture import capture_screen as _cap
+    return _cap(window_only=False)
+
+
+def grab_resolve_frame() -> dict:
+    """Export the current Resolve timeline frame as an image for Claude to analyze."""
+    from screen_capture import grab_resolve_frame as _grab
+    return _grab()
+
+
+def load_reference_image(path_or_url: str) -> dict:
+    """Load a reference image from disk or URL for color matching analysis."""
+    from screen_capture import load_image_as_base64
+    return load_image_as_base64(path_or_url)
+
+
+# ─────────────────────────────────────────────
+#  ADVANCED NODE GRAPH
+# ─────────────────────────────────────────────
+
+def create_parallel_node(label: str = "Parallel", track: int = 1, clip_index: int = 0) -> dict:
+    """Add a parallel color node to a clip's node graph."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index >= len(clips):
+        return {"error": "Clip not found"}
+    clip = clips[clip_index]
+    resolve.OpenPage("color")
+    graph = clip.GetNodeGraph()
+    if not graph:
+        return {"error": "Cannot access node graph"}
+    node = graph.AddNode("ParallelNode")
+    if node and label:
+        node.SetLabel(label)
+    return {"success": bool(node), "label": label, "type": "parallel"}
+
+
+def create_layer_node(label: str = "Layer", track: int = 1, clip_index: int = 0) -> dict:
+    """Add a layer mixer node to a clip's node graph."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index >= len(clips):
+        return {"error": "Clip not found"}
+    clip = clips[clip_index]
+    resolve.OpenPage("color")
+    graph = clip.GetNodeGraph()
+    if not graph:
+        return {"error": "Cannot access node graph"}
+    node = graph.AddNode("LayerNode")
+    if node and label:
+        node.SetLabel(label)
+    return {"success": bool(node), "label": label, "type": "layer"}
+
+
+def set_node_curves(
+    node_index: int = 1,
+    curve_type: str = "custom",
+    control_points: Optional[list] = None,
+    track: int = 1,
+    clip_index: int = 0,
+) -> dict:
+    """
+    Set custom curve control points on a color node.
+    curve_type: 'lum_vs_lum' | 'hue_vs_sat' | 'hue_vs_hue' | 'sat_vs_sat' | 'custom'
+    control_points: list of [input, output] pairs, e.g. [[0,0],[0.5,0.6],[1,1]]
+    """
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index >= len(clips):
+        return {"error": "Clip not found"}
+    clip = clips[clip_index]
+    resolve.OpenPage("color")
+
+    if control_points is None:
+        control_points = [[0, 0], [0.5, 0.5], [1, 1]]
+
+    # Map curve type to Resolve property names
+    curve_map = {
+        "custom": "CurveCustom",
+        "lum_vs_lum": "CurveLumVsLum",
+        "hue_vs_sat": "CurveHueVsSat",
+        "hue_vs_hue": "CurveHueVsHue",
+        "sat_vs_sat": "CurveSatVsSat",
+        "hue_vs_lum": "CurveHueVsLum",
+    }
+    prop = curve_map.get(curve_type, "CurveCustom")
+
+    try:
+        clip.SetProperty(prop, {"Points": control_points})
+        return {
+            "success": True,
+            "clip": clip.GetName(),
+            "curve_type": curve_type,
+            "control_points": control_points,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def get_node_graph(track: int = 1, clip_index: int = 0) -> dict:
+    """Get the color node graph structure for a clip."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index >= len(clips):
+        return {"error": "Clip not found"}
+    clip = clips[clip_index]
+    resolve.OpenPage("color")
+    graph = clip.GetNodeGraph()
+    if not graph:
+        return {"error": "Cannot access node graph"}
+
+    nodes = []
+    try:
+        for node in (graph.GetNodeList() or []):
+            nodes.append({
+                "label": node.GetLabel() if hasattr(node, "GetLabel") else "",
+                "type": node.GetType() if hasattr(node, "GetType") else "Unknown",
+            })
+    except Exception:
+        pass
+
+    return {
+        "clip": clip.GetName(),
+        "track": track,
+        "index": clip_index,
+        "nodes": nodes,
+        "node_count": len(nodes),
+    }
+
+
+def apply_hsl_qualifier(
+    hue_center: float = 0.0,
+    hue_width: float = 30.0,
+    sat_min: float = 0.2,
+    sat_max: float = 1.0,
+    lum_min: float = 0.0,
+    lum_max: float = 1.0,
+    track: int = 1,
+    clip_index: int = 0,
+) -> dict:
+    """
+    Apply an HSL qualifier (secondary color correction selector) to a clip node.
+    Useful for isolating specific colors (e.g., sky, skin tones, grass).
+    hue_center: 0-360 (red=0, yellow=60, green=120, cyan=180, blue=240, magenta=300)
+    hue_width: how wide the hue selection is (degrees)
+    """
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index >= len(clips):
+        return {"error": "Clip not found"}
+    clip = clips[clip_index]
+    resolve.OpenPage("color")
+    try:
+        clip.SetProperty("QualifierHueLow", (hue_center - hue_width / 2) / 360.0)
+        clip.SetProperty("QualifierHueHigh", (hue_center + hue_width / 2) / 360.0)
+        clip.SetProperty("QualifierSatLow", sat_min)
+        clip.SetProperty("QualifierSatHigh", sat_max)
+        clip.SetProperty("QualifierLumLow", lum_min)
+        clip.SetProperty("QualifierLumHigh", lum_max)
+        return {
+            "success": True,
+            "clip": clip.GetName(),
+            "hue_center": hue_center,
+            "hue_width": hue_width,
+            "message": f"HSL qualifier applied. Selecting hue ~{hue_center}° ±{hue_width/2}°",
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ─────────────────────────────────────────────
+#  SCENE DETECTION
+# ─────────────────────────────────────────────
+
+def detect_scene_changes(file_path: str, threshold: float = 0.3) -> dict:
+    """
+    Detect scene cuts in a video file using FFprobe.
+    threshold: 0.0-1.0, lower = more sensitive (detects more cuts).
+    Returns a list of timestamps where scene changes occur.
+    """
+    import subprocess as sp
+    cmd = [
+        "ffprobe",
+        "-v", "quiet",
+        "-show_frames",
+        "-of", "json",
+        "-select_streams", "v:0",
+        "-f", "lavfi",
+        f"movie={file_path},select=gt(scene\\,{threshold})",
+        "-show_entries", "frame=pkt_pts_time",
+        file_path,
+    ]
+    # Simpler ffmpeg scene detect approach
+    cmd2 = [
+        "ffmpeg", "-i", file_path,
+        "-vf", f"select='gt(scene,{threshold})',showinfo",
+        "-f", "null", "-",
+    ]
+    try:
+        result = sp.run(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "frame_tags=lavfi.scene_score",
+                "-of", "json",
+                "-select_streams", "v",
+                "-f", "lavfi",
+                f"movie={file_path},scdet=threshold={threshold}",
+            ],
+            capture_output=True, text=True, timeout=60
+        )
+
+        # Parse showinfo output for pts_time
+        result2 = sp.run(
+            ["ffmpeg", "-i", file_path, "-vf", f"scdet=threshold={threshold}", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=120
+        )
+
+        scenes = []
+        for line in result2.stderr.split("\n"):
+            if "Parsed_scdet" in line and "pts_time" in line:
+                try:
+                    import re
+                    m = re.search(r"pts_time:([\d.]+)", line)
+                    if m:
+                        scenes.append(round(float(m.group(1)), 2))
+                except Exception:
+                    pass
+
+        return {
+            "success": True,
+            "file": file_path,
+            "threshold": threshold,
+            "scene_count": len(scenes),
+            "scene_timestamps": scenes,
+            "message": f"Found {len(scenes)} scene changes.",
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def add_scene_cut_markers(file_path: str, threshold: float = 0.3) -> dict:
+    """Detect scene changes in a file and add markers to the current timeline at each cut."""
+    scene_result = detect_scene_changes(file_path, threshold)
+    if not scene_result.get("success"):
+        return scene_result
+
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+
+    added = 0
+    for ts in scene_result["scene_timestamps"]:
+        frame = int(ts * fps)
+        ok = timeline.AddMarker(frame, "Cyan", "Scene Cut", f"at {ts:.2f}s", 1)
+        if ok:
+            added += 1
+
+    return {
+        "success": True,
+        "markers_added": added,
+        "scene_timestamps": scene_result["scene_timestamps"],
+    }
+
+
+# ─────────────────────────────────────────────
+#  AI GENERATION + TIMELINE
+# ─────────────────────────────────────────────
+
+def generate_ai_image(
+    prompt: str,
+    provider: str = "auto",
+    width: int = 1920,
+    height: int = 1080,
+    style: str = "cinematic",
+) -> dict:
+    """Generate an AI image using DALL-E 3 or Flux. Returns file path + preview."""
+    from ai_generate import generate_image
+    return generate_image(prompt, provider, width, height, style)
+
+
+def drop_ai_image_to_timeline(
+    file_path: str,
+    position_seconds: float = -1,
+    duration_seconds: float = 3.0,
+) -> dict:
+    """Add a generated AI image to the current Resolve timeline."""
+    from ai_generate import add_image_to_timeline
+    return add_image_to_timeline(file_path, position_seconds, duration_seconds)
+
+
+def generate_ai_transition(
+    clip_before_index: int = 0,
+    clip_after_index: int = 1,
+    transition_style: str = "cinematic blend",
+    track: int = 1,
+    duration_seconds: float = 2.0,
+) -> dict:
+    """
+    Generate an AI transition frame between two clips and insert it onto the timeline.
+    1. Grabs last frame of clip_before and first frame of clip_after.
+    2. Generates an AI transition frame via DALL-E/Flux.
+    3. Places it between the two clips.
+    """
+    from screen_capture import grab_resolve_frame
+    from ai_generate import generate_transition_frame, add_image_to_timeline
+
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+    clips = timeline.GetItemListInTrack("video", track) or []
+
+    if clip_before_index >= len(clips):
+        return {"error": f"Clip {clip_before_index} not found on track {track}"}
+    if clip_after_index >= len(clips):
+        return {"error": f"Clip {clip_after_index} not found on track {track}"}
+
+    clip_before = clips[clip_before_index]
+    clip_after = clips[clip_after_index]
+
+    # Grab frame at end of clip_before
+    timeline.SetCurrentTimecodeByFrame(clip_before.GetEnd() - 1)
+    frame_a_result = grab_resolve_frame()
+
+    # Grab frame at start of clip_after
+    timeline.SetCurrentTimecodeByFrame(clip_after.GetStart())
+    frame_b_result = grab_resolve_frame()
+
+    # Generate transition
+    import tempfile, base64, os
+    frame_a_path, frame_b_path = None, None
+
+    if "image_base64" in frame_a_result:
+        frame_a_path = tempfile.mktemp(suffix=".jpg")
+        with open(frame_a_path, "wb") as f:
+            f.write(base64.b64decode(frame_a_result["image_base64"]))
+
+    if "image_base64" in frame_b_result:
+        frame_b_path = tempfile.mktemp(suffix=".jpg")
+        with open(frame_b_path, "wb") as f:
+            f.write(base64.b64decode(frame_b_result["image_base64"]))
+
+    if not frame_a_path or not frame_b_path:
+        # Fallback: generate without reference frames
+        from ai_generate import generate_image
+        result = generate_image(
+            f"Cinematic {transition_style} transition frame for a video edit, professional production, high quality",
+            style=transition_style,
+        )
+    else:
+        result = generate_transition_frame(frame_a_path, frame_b_path, transition_style)
+
+    # Cleanup temp frames
+    for p in [frame_a_path, frame_b_path]:
+        if p:
+            try:
+                os.unlink(p)
+            except Exception:
+                pass
+
+    if not result.get("success"):
+        return result
+
+    # Insert between the two clips
+    insert_pos = clip_before.GetEnd() / fps
+    drop_result = add_image_to_timeline(result["file_path"], insert_pos, duration_seconds)
+
+    return {
+        "success": drop_result.get("success", False),
+        "transition_file": result["file_path"],
+        "image_base64": result.get("image_base64"),
+        "media_type": result.get("media_type", "image/png"),
+        "inserted_at": insert_pos,
+        "duration": duration_seconds,
+        "style": transition_style,
+        "message": f"AI transition generated and inserted at {insert_pos:.2f}s",
+    }
+
+
+# ─────────────────────────────────────────────
+#  AUTO COLOR TOOLS
+# ─────────────────────────────────────────────
+
+def auto_color(track: int = 1, clip_index: int = 0) -> dict:
+    """Apply Resolve's automatic color balance to a clip."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index >= len(clips):
+        return {"error": "Clip not found"}
+    clip = clips[clip_index]
+    resolve.OpenPage("color")
+    try:
+        ok = clip.AutoBalance()
+        return {"success": bool(ok), "clip": clip.GetName()}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def match_color_to_clip(
+    source_track: int = 1,
+    source_clip_index: int = 0,
+    target_track: int = 1,
+    target_clip_index: int = 1,
+) -> dict:
+    """Match the color of one clip to another using Resolve's color match feature."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+
+    src_clips = timeline.GetItemListInTrack("video", source_track) or []
+    tgt_clips = timeline.GetItemListInTrack("video", target_track) or []
+
+    if source_clip_index >= len(src_clips):
+        return {"error": "Source clip not found"}
+    if target_clip_index >= len(tgt_clips):
+        return {"error": "Target clip not found"}
+
+    resolve.OpenPage("color")
+    src = src_clips[source_clip_index]
+    tgt = tgt_clips[target_clip_index]
+
+    try:
+        ok = tgt.ColorMatch(src)
+        return {
+            "success": bool(ok),
+            "source": src.GetName(),
+            "target": tgt.GetName(),
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}

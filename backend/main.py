@@ -19,6 +19,8 @@ load_dotenv()
 from claude_agent import stream_chat
 import resolve_bridge as rb
 from transcribe import transcribe, format_transcript_for_claude
+from screen_capture import capture_screen, grab_resolve_frame, load_image_as_base64
+from ai_generate import generate_image, add_image_to_timeline
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
@@ -281,6 +283,92 @@ async def get_clip_grade(req: ClipSelector):
 # ─────────────────────────────────────────────
 #  ENTRY
 # ─────────────────────────────────────────────
+
+# ─────────────────────────────────────────────
+#  SCREEN CAPTURE
+# ─────────────────────────────────────────────
+
+@app.post("/api/resolve/screen")
+async def capture_screen_endpoint():
+    try:
+        return await asyncio.to_thread(capture_screen)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/resolve/frame")
+async def capture_frame_endpoint():
+    try:
+        return await asyncio.to_thread(grab_resolve_frame)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────
+#  REFERENCE IMAGE
+# ─────────────────────────────────────────────
+
+class ReferenceImageRequest(BaseModel):
+    path_or_url: str
+
+
+@app.post("/api/reference-image/load")
+async def load_reference_image(req: ReferenceImageRequest):
+    try:
+        return await asyncio.to_thread(load_image_as_base64, req.path_or_url)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────
+#  AI GENERATION
+# ─────────────────────────────────────────────
+
+class GenerateRequest(BaseModel):
+    prompt: str
+    provider: str = "auto"
+    width: int = 1920
+    height: int = 1080
+    style: str = "cinematic"
+
+
+class DropToTimelineRequest(BaseModel):
+    file_path: str
+    position_seconds: float = -1
+    duration_seconds: float = 3.0
+
+
+@app.post("/api/ai/generate")
+async def ai_generate(req: GenerateRequest):
+    try:
+        return await asyncio.to_thread(
+            generate_image, req.prompt, req.provider, req.width, req.height, req.style
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/ai/drop-to-timeline")
+async def ai_drop_to_timeline(req: DropToTimelineRequest):
+    try:
+        return await asyncio.to_thread(
+            add_image_to_timeline, req.file_path, req.position_seconds, req.duration_seconds
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────
+#  RENDER JOB DELETE
+# ─────────────────────────────────────────────
+
+@app.delete("/api/render/job/{job_id}")
+async def delete_render_job(job_id: str):
+    try:
+        return rb.delete_render_job(job_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="127.0.0.1", port=8765, reload=True, log_level="info")

@@ -20,13 +20,26 @@ const MODELS = [
   { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', desc: 'Fastest · Simple tasks' },
 ]
 
-export function ChatPanel() {
+interface ChatPanelProps {
+  externalMessage?: string
+  onExternalMessageConsumed?: () => void
+}
+
+export function ChatPanel({ externalMessage, onExternalMessageConsumed }: ChatPanelProps) {
   const [model, setModel] = useState('claude-sonnet-4-6')
   const [input, setInput] = useState('')
   const [showModelMenu, setShowModelMenu] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const { messages, isLoading, sendMessage, clearMessages, stopStreaming } = useChat(model)
+
+  // Accept messages injected from other panels (Screen, AI Generate, Color Reference)
+  useEffect(() => {
+    if (externalMessage) {
+      sendMessage(externalMessage)
+      onExternalMessageConsumed?.()
+    }
+  }, [externalMessage])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
