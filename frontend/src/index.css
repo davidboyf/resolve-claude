@@ -1,0 +1,95 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  font-family: 'Inter', sans-serif;
+}
+
+body {
+  background: #0e0e10;
+  color: #e5e7eb;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2a30;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3a42;
+}
+
+/* Prose-like chat text */
+.chat-text p { margin-bottom: 0.5rem; }
+.chat-text p:last-child { margin-bottom: 0; }
+.chat-text code {
+  font-family: 'JetBrains Mono', monospace;
+  background: #1e1e24;
+  padding: 0.1em 0.4em;
+  border-radius: 4px;
+  font-size: 0.85em;
+  color: #c084fc;
+}
+.chat-text pre {
+  background: #1e1e24;
+  border-radius: 8px;
+  padding: 1rem;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+.chat-text pre code {
+  background: transparent;
+  padding: 0;
+  color: #e5e7eb;
+}
+.chat-text ul { padding-left: 1.5rem; list-style: disc; }
+.chat-text ol { padding-left: 1.5rem; list-style: decimal; }
+.chat-text li { margin-bottom: 0.25rem; }
+.chat-text strong { color: #fff; font-weight: 600; }
+
+/* Timeline clip */
+.timeline-clip {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: 4px;
+  background: #3d63c9;
+  border: 1px solid #5b8cf5;
+  overflow: hidden;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.timeline-clip:hover { opacity: 0.85; }
+
+/* Blinking cursor */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.cursor-blink {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: #c084fc;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  animation: blink 1s steps(1) infinite;
+}

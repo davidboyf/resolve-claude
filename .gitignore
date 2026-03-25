@@ -1,0 +1,19 @@
+# Python
+backend/venv/
+backend/__pycache__/
+backend/.env
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+.DS_Store
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# Editor
+.vscode/
+.idea/
+*.swp

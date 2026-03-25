@@ -1,0 +1,225 @@
+"""
+FastAPI backend for Claude × DaVinci Resolve
+"""
+import os
+import json
+import asyncio
+from typing import Optional
+from pathlib import Path
+from dotenv import load_dotenv
+
+from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+import uvicorn
+
+load_dotenv()
+
+from claude_agent import stream_chat
+import resolve_bridge as rb
+from transcribe import transcribe, format_transcript_for_claude
+
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+app = FastAPI(title="Claude × DaVinci Resolve", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ─────────────────────────────────────────────
+#  MODELS
+# ─────────────────────────────────────────────
+
+class ChatRequest(BaseModel):
+    messages: list
+    model: str = "claude-sonnet-4-6"
+
+
+class TranscribeRequest(BaseModel):
+    video_path: str
+    language: str = "en"
+    model_size: str = "base"
+
+
+class MarkerRequest(BaseModel):
+    time_seconds: float
+    color: str = "Blue"
+    name: str = ""
+    note: str = ""
+
+
+class PlayheadRequest(BaseModel):
+    time_seconds: float
+
+
+class ColorWheelRequest(BaseModel):
+    wheel: str
+    red: float = 0.0
+    green: float = 0.0
+    blue: float = 0.0
+    luma: float = 0.0
+    track: int = 1
+    clip_index: int = 0
+
+
+class RenderRequest(BaseModel):
+    preset_name: str
+    output_path: str
+
+
+# ─────────────────────────────────────────────
+#  STATUS
+# ─────────────────────────────────────────────
+
+@app.get("/api/status")
+async def get_status():
+    return rb.get_status()
+
+
+@app.get("/api/project")
+async def get_project():
+    try:
+        return rb.get_project_info()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────
+#  CHAT (SSE streaming)
+# ─────────────────────────────────────────────
+
+@app.post("/api/chat")
+async def chat(req: ChatRequest):
+    """Stream Claude's response with DaVinci Resolve tool_use."""
+
+    async def event_generator():
+        try:
+            async for event in stream_chat(
+                messages=req.messages,
+                model=req.model,
+                api_key=ANTHROPIC_API_KEY,
+            ):
+                yield f"data: {json.dumps(event)}\n\n"
+                await asyncio.sleep(0)  # allow other tasks
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ─────────────────────────────────────────────
+#  TIMELINE
+# ─────────────────────────────────────────────
+
+@app.get("/api/timeline")
+async def get_timeline():
+    try:
+        return rb.get_timeline_info()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/timeline/markers")
+async def get_markers():
+    try:
+        return rb.get_markers()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/timeline/marker")
+async def add_marker(req: MarkerRequest):
+    try:
+        return rb.add_marker(req.time_seconds, req.color, req.name, req.note)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/timeline/playhead")
+async def set_playhead(req: PlayheadRequest):
+    try:
+        return rb.set_playhead(req.time_seconds)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/timeline/switch-page/{page}")
+async def switch_page(page: str):
+    try:
+        return rb.switch_page(page)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────
+#  MEDIA POOL
+# ─────────────────────────────────────────────
+
+@app.get("/api/media-pool")
+async def get_media_pool():
+    try:
+        return rb.get_media_pool_clips()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────
+#  TRANSCRIBE
+# ─────────────────────────────────────────────
+
+@app.post("/api/transcribe")
+async def transcribe_video(req: TranscribeRequest):
+    """Transcribe a video file and return timestamped segments."""
+    try:
+        result = await asyncio.to_thread(
+            transcribe,
+            req.video_path,
+            req.language,
+            req.model_size,
+        )
+        result["formatted"] = format_transcript_for_claude(result)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────
+#  RENDER
+# ─────────────────────────────────────────────
+
+@app.get("/api/render/presets")
+async def get_render_presets():
+    try:
+        return rb.get_render_presets()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/render/start")
+async def start_render(req: RenderRequest):
+    try:
+        return rb.start_render(req.preset_name, req.output_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────
+#  ENTRY
+# ─────────────────────────────────────────────
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="127.0.0.1", port=8765, reload=True, log_level="info")
