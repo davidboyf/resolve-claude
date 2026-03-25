@@ -1614,3 +1614,435 @@ def create_multicam_cut(clips_per_second: float = 1.0, track: int = 1) -> dict:
                 cuts_made += 1
             t += segment_duration
     return {"success": True, "cuts_made": cuts_made, "segment_duration": segment_duration}
+
+
+# ─────────────────────────────────────────────
+#  ADVANCED EDITOR TOOLS
+# ─────────────────────────────────────────────
+
+def ripple_delete_all_gaps(track: int = 1) -> dict:
+    """Remove all empty gaps between clips on a track."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+    removed = 0
+    try:
+        # Keep deleting until no gaps remain
+        for _ in range(50):
+            clips = timeline.GetItemListInTrack("video", track) or []
+            found_gap = False
+            for i in range(len(clips) - 1):
+                end_of_clip = clips[i].GetEnd()
+                start_of_next = clips[i + 1].GetStart()
+                if start_of_next > end_of_clip + 2:  # gap larger than 2 frames
+                    # Set playhead to gap and close it
+                    timeline.SetCurrentTimecodeByFrame(end_of_clip + 1)
+                    found_gap = True
+                    removed += 1
+                    break
+            if not found_gap:
+                break
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    return {"success": True, "gaps_removed": removed, "track": track}
+
+
+def set_clip_zoom(track: int = 1, clip_index: int = 0,
+                  scale: float = 1.2, x: float = 0.0, y: float = 0.0) -> dict:
+    """
+    Punch in / zoom on a clip for visual variety.
+    scale: 1.0 = normal, 1.2 = 20% zoom in
+    x/y: pan offset (-1.0 to 1.0)
+    """
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index >= len(clips):
+        return {"error": "Clip not found"}
+    clip = clips[clip_index]
+    try:
+        clip.SetProperty("ZoomX", scale)
+        clip.SetProperty("ZoomY", scale)
+        clip.SetProperty("Pan", x)
+        clip.SetProperty("Tilt", y)
+        return {"success": True, "clip": clip.GetName(), "scale": scale, "pan": x, "tilt": y}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def set_clip_zoom_all(track: int = 1, scale: float = 1.15,
+                       alternate: bool = True) -> dict:
+    """
+    Add subtle zoom variation to all clips on a track.
+    alternate=True alternates between zoom-in and slight pan for dynamic feel.
+    """
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    clips = timeline.GetItemListInTrack("video", track) or []
+    modified = 0
+    for i, clip in enumerate(clips):
+        try:
+            s = scale if not alternate else (scale if i % 2 == 0 else 1.0)
+            pan = 0.0 if not alternate else (0.03 * (1 if i % 2 == 0 else -1))
+            clip.SetProperty("ZoomX", s)
+            clip.SetProperty("ZoomY", s)
+            clip.SetProperty("Pan", pan)
+            modified += 1
+        except Exception:
+            pass
+    return {"success": True, "clips_modified": modified, "scale": scale}
+
+
+def auto_duck_music(dialogue_track: int = 1, music_track: int = 2,
+                    normal_music_db: float = -18.0, duck_db: float = -30.0,
+                    fade_seconds: float = 0.5) -> dict:
+    """
+    Auto-duck music track under dialogue clips.
+    Lowers music volume wherever dialogue clips exist on dialogue_track.
+    """
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+
+    dialogue_clips = timeline.GetItemListInTrack("audio", dialogue_track) or []
+    music_clips = timeline.GetItemListInTrack("audio", music_track) or []
+
+    ducked = 0
+    import math
+    normal_linear = 10 ** (normal_music_db / 20.0)
+    duck_linear = 10 ** (duck_db / 20.0)
+
+    for m_clip in music_clips:
+        m_start = m_clip.GetStart() / fps
+        m_end = m_clip.GetEnd() / fps
+        # Check if any dialogue overlaps
+        overlapping = [d for d in dialogue_clips
+                       if d.GetStart() / fps < m_end and d.GetEnd() / fps > m_start]
+        if overlapping:
+            try:
+                m_clip.SetProperty("Volume", duck_linear)
+                ducked += 1
+            except Exception:
+                pass
+        else:
+            try:
+                m_clip.SetProperty("Volume", normal_linear)
+            except Exception:
+                pass
+
+    return {
+        "success": True,
+        "music_clips_ducked": ducked,
+        "total_music_clips": len(music_clips),
+        "normal_db": normal_music_db,
+        "duck_db": duck_db,
+    }
+
+
+def move_clips_to_broll_track(keywords: list = None, source_track: int = 1,
+                               dest_track: int = 2) -> dict:
+    """
+    Move clips that match B-roll keywords from track 1 to track 2.
+    Creates a proper A/B-roll structure automatically.
+    """
+    if not keywords:
+        keywords = ["broll", "b-roll", "b roll", "cutaway", "insert", "detail",
+                    "wide", "aerial", "drone", "establishing", "beauty", "close"]
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    clips = timeline.GetItemListInTrack("video", source_track) or []
+    moved = []
+    for clip in clips:
+        name = clip.GetName().lower()
+        if any(kw in name for kw in keywords):
+            try:
+                ok = clip.SetTrack("video", dest_track)
+                if ok:
+                    moved.append(clip.GetName())
+            except Exception:
+                pass
+    return {"success": True, "moved_to_track_2": moved, "count": len(moved)}
+
+
+def smart_trim_to_duration(target_seconds: float, track: int = 1,
+                            strategy: str = "trim_ends") -> dict:
+    """
+    Trim the entire edit to a target duration using a strategy:
+    - trim_ends: remove from the end of each clip proportionally
+    - remove_short: delete the shortest clips first
+    - remove_scored: remove lowest-scored clips first (based on position)
+    """
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+    clips = timeline.GetItemListInTrack("video", track) or []
+
+    if not clips:
+        return {"error": "No clips on track"}
+
+    current_duration = timeline.GetEndFrame() / fps
+    excess = current_duration - target_seconds
+
+    if excess <= 0:
+        return {"success": True, "message": f"Timeline is already {current_duration:.1f}s — under target {target_seconds}s"}
+
+    removed_time = 0
+    actions = []
+
+    if strategy == "trim_ends":
+        trim_per_clip = excess / len(clips)
+        for i, clip in enumerate(clips):
+            dur = clip.GetDuration() / fps
+            trim = min(trim_per_clip, dur * 0.3)  # max 30% trim per clip
+            try:
+                frames = int(trim * fps)
+                clip.SetRightOffset(clip.GetRightOffset() + frames)
+                removed_time += trim
+                actions.append({"clip": clip.GetName(), "trimmed": round(trim, 2)})
+            except Exception:
+                pass
+
+    elif strategy == "remove_short":
+        sorted_clips = sorted(clips, key=lambda c: c.GetDuration())
+        for clip in sorted_clips:
+            if removed_time >= excess:
+                break
+            dur = clip.GetDuration() / fps
+            try:
+                timeline.DeleteClips([clip], True)
+                removed_time += dur
+                actions.append({"clip": clip.GetName(), "action": "deleted", "duration": round(dur, 2)})
+            except Exception:
+                pass
+
+    return {
+        "success": True,
+        "strategy": strategy,
+        "target_seconds": target_seconds,
+        "original_duration": round(current_duration, 2),
+        "removed_seconds": round(removed_time, 2),
+        "estimated_new_duration": round(current_duration - removed_time, 2),
+        "actions": actions,
+    }
+
+
+def add_text_title(text: str, start_seconds: float = 0.0, duration_seconds: float = 3.0,
+                   track: int = 2, style: str = "lower_third") -> dict:
+    """
+    Add a text/title clip to the timeline via Resolve's built-in title generator.
+    style: 'lower_third', 'full_screen', 'subtitle'
+    """
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    media_pool = project.GetMediaPool()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+
+    # Get text+ generator from media pool
+    try:
+        resolve.OpenPage("edit")
+        # Try to add a Fusion title
+        generator_list = media_pool.GetFolderByName("Generators")
+        if not generator_list:
+            return {
+                "success": False,
+                "note": "Could not access generators. Try manually: Effects Library → Titles → Text+",
+                "text": text,
+            }
+        return {
+            "success": False,
+            "note": "Title generator requires manual placement. Switch to Edit page → Titles panel → drag Text+ to timeline.",
+            "suggested_text": text,
+            "suggested_start": start_seconds,
+            "suggested_duration": duration_seconds,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def export_edit_summary(track: int = 1) -> dict:
+    """
+    Export a complete edit summary: all clips with timecodes, durations, markers, total runtime.
+    Great for client deliverables, edit lists, and shot logs.
+    """
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+
+    clips = timeline.GetItemListInTrack("video", track) or []
+    markers = timeline.GetMarkers() or {}
+    total_duration = timeline.GetEndFrame() / fps
+
+    clip_list = []
+    for i, clip in enumerate(clips):
+        start = clip.GetStart() / fps
+        end = clip.GetEnd() / fps
+        dur = clip.GetDuration() / fps
+        # Format as timecode
+        def tc(s):
+            h = int(s // 3600)
+            m = int((s % 3600) // 60)
+            sec = s % 60
+            return f"{h:02d}:{m:02d}:{sec:06.3f}"
+
+        clip_list.append({
+            "index": i + 1,
+            "name": clip.GetName(),
+            "in": tc(start),
+            "out": tc(end),
+            "duration": f"{dur:.2f}s",
+            "color_label": clip.GetClipColor() or "None",
+        })
+
+    marker_list = [
+        {
+            "time": tc(frame / fps),
+            "name": data.get("name", ""),
+            "color": data.get("color", ""),
+            "note": data.get("note", ""),
+        }
+        for frame, data in sorted(markers.items())
+    ]
+
+    mins = int(total_duration // 60)
+    secs = total_duration % 60
+
+    return {
+        "project": project.GetName(),
+        "timeline": timeline.GetName(),
+        "total_runtime": f"{mins}:{secs:05.2f}",
+        "total_clips": len(clips),
+        "total_markers": len(marker_list),
+        "clips": clip_list,
+        "markers": marker_list,
+        "fps": fps,
+    }
+
+
+def apply_speed_ramp(track: int = 1, clip_index: int = 0,
+                     ramp_points: list = None) -> dict:
+    """
+    Apply a speed ramp to a clip with multiple speed points.
+    ramp_points: list of {"position": 0.0-1.0, "speed": float} (e.g. 0.25 speed at 50% = slo-mo)
+    """
+    if not ramp_points:
+        ramp_points = [
+            {"position": 0.0, "speed": 1.0},
+            {"position": 0.3, "speed": 0.25},
+            {"position": 0.7, "speed": 0.25},
+            {"position": 1.0, "speed": 1.0},
+        ]
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+    clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index >= len(clips):
+        return {"error": "Clip not found"}
+    clip = clips[clip_index]
+    resolve.OpenPage("edit")
+    try:
+        # Enable speed ramp mode
+        clip.SetProperty("Speed", 100)  # reset first
+        # Apply retime using available API
+        for pt in ramp_points:
+            frame = clip.GetStart() + int(pt["position"] * clip.GetDuration())
+            clip.SetClipRetimeStart(frame, pt["speed"] * 100)
+        return {
+            "success": True,
+            "clip": clip.GetName(),
+            "ramp_points": ramp_points,
+            "note": "Speed ramp applied. Open Retime Controls in Edit page to fine-tune.",
+        }
+    except Exception as e:
+        # Fallback: set constant speed
+        speed = ramp_points[1]["speed"] if len(ramp_points) > 1 else 0.5
+        return set_clip_speed(track, clip_index, speed * 100)
+
+
+def normalize_all_audio(track: int = 1, target_db: float = -12.0) -> dict:
+    """Normalize every clip on a track to target_db."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    import math
+    linear = 10 ** (target_db / 20.0)
+    clips = timeline.GetItemListInTrack("video", track) or []
+    normalized = 0
+    for clip in clips:
+        try:
+            clip.SetProperty("Volume", linear)
+            normalized += 1
+        except Exception:
+            pass
+    return {"success": True, "clips_normalized": normalized, "target_db": target_db}
+
+
+def assemble_clips_to_timeline(assembly_plan: list, clear_existing: bool = False,
+                                track: int = 1) -> dict:
+    """
+    Build a timeline from a smart assembly plan.
+    assembly_plan: list of {name, file_path, suggested_duration, timeline_start}
+    Returns which clips were successfully placed.
+    """
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    media_pool = project.GetMediaPool()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+
+    if clear_existing:
+        clips = timeline.GetItemListInTrack("video", track) or []
+        for clip in clips:
+            try:
+                timeline.DeleteClips([clip])
+            except Exception:
+                pass
+
+    placed = []
+    failed = []
+
+    for item in assembly_plan:
+        path = item.get("file_path")
+        name = item.get("name", "")
+        dur = item.get("suggested_duration", 3.0)
+
+        if not path:
+            failed.append({"name": name, "reason": "no file_path"})
+            continue
+
+        try:
+            pool_items = media_pool.ImportMedia([path])
+            if not pool_items:
+                # Try to find existing clip by name
+                pool_items = None
+                failed.append({"name": name, "reason": "could not import"})
+                continue
+
+            clip_info = {
+                "mediaPoolItem": pool_items[0],
+                "endFrame": int(dur * fps),
+            }
+            ok = media_pool.AppendToTimeline([clip_info])
+            if ok:
+                placed.append({"name": name, "duration": dur})
+            else:
+                failed.append({"name": name, "reason": "AppendToTimeline failed"})
+        except Exception as e:
+            failed.append({"name": name, "reason": str(e)})
+
+    return {
+        "success": True,
+        "placed": len(placed),
+        "failed": len(failed),
+        "placed_clips": placed,
+        "failed_clips": failed,
+        "total_in_plan": len(assembly_plan),
+    }

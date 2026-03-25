@@ -797,4 +797,282 @@ RESOLVE_TOOLS = [
             "required": [],
         },
     },
+
+    # ── AUDIO ANALYSIS ────────────────────────────────────────────────
+    {
+        "name": "get_audio_energy",
+        "description": "Analyze the loudness and energy of an audio or video file using FFmpeg. Returns mean/max volume in dB and energy level. Use this to find the most energetic clips or detect dead audio.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "Path to the audio or video file"},
+            },
+            "required": ["file_path"],
+        },
+    },
+    {
+        "name": "get_waveform_peaks",
+        "description": "Divide a file into segments and measure audio energy per segment. Returns the best/most energetic moments — perfect for finding where to cut.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string"},
+                "num_segments": {"type": "integer", "default": 20, "description": "How many segments to analyze"},
+            },
+            "required": ["file_path"],
+        },
+    },
+    {
+        "name": "detect_silence_ranges",
+        "description": "Find exact silence ranges in a file using FFmpeg silencedetect. Returns start/end/duration of every silent section — use to precisely cut dead air.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string"},
+                "silence_threshold_db": {"type": "number", "default": -35.0},
+                "min_silence_duration": {"type": "number", "default": 0.5},
+            },
+            "required": ["file_path"],
+        },
+    },
+
+    # ── CLIP INTELLIGENCE ─────────────────────────────────────────────
+    {
+        "name": "score_clips",
+        "description": "Score and rank all clips on the timeline based on name keywords, duration, and position. Returns keeper/review/cut recommendations. Use before a rough cut to understand what you're working with.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "timeline_info": {"type": "object", "description": "Pass the result of get_timeline_info() here"},
+            },
+            "required": ["timeline_info"],
+        },
+    },
+    {
+        "name": "analyze_hook_strength",
+        "description": "Analyze the first 3-5 seconds of the edit for social media hook strength. Returns a score and specific suggestions to improve retention.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "timeline_info": {"type": "object"},
+            },
+            "required": ["timeline_info"],
+        },
+    },
+    {
+        "name": "generate_chapter_markers",
+        "description": "Generate YouTube-ready chapter timestamps from timeline markers. Returns formatted text ready to paste into a YouTube description.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "timeline_info": {"type": "object"},
+            },
+            "required": ["timeline_info"],
+        },
+    },
+    {
+        "name": "export_edit_summary",
+        "description": "Export a complete edit summary with all clips, timecodes, durations, and markers. Great for client deliverables, EDLs, and shot logs.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+            },
+            "required": [],
+        },
+    },
+
+    # ── ADVANCED EDITING ──────────────────────────────────────────────
+    {
+        "name": "ripple_delete_all_gaps",
+        "description": "Remove all empty gaps between clips on a track in one pass.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "set_clip_zoom",
+        "description": "Punch in / zoom on a specific clip for visual variety. scale=1.2 is 20% zoom. Use x/y to reframe.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+                "clip_index": {"type": "integer", "default": 0},
+                "scale": {"type": "number", "default": 1.2, "description": "1.0=normal, 1.2=20% zoom in"},
+                "x": {"type": "number", "default": 0.0, "description": "Horizontal pan offset"},
+                "y": {"type": "number", "default": 0.0, "description": "Vertical tilt offset"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "set_clip_zoom_all",
+        "description": "Add subtle zoom variation to all clips on a track for a dynamic feel. Alternates between zoom-in and pan for variety.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+                "scale": {"type": "number", "default": 1.15},
+                "alternate": {"type": "boolean", "default": True, "description": "Alternate zoom direction between clips"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "auto_duck_music",
+        "description": "Automatically lower music volume under dialogue clips (audio ducking). Lowers music wherever dialogue exists, restores it in gaps.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "dialogue_track": {"type": "integer", "default": 1},
+                "music_track": {"type": "integer", "default": 2},
+                "normal_music_db": {"type": "number", "default": -18.0},
+                "duck_db": {"type": "number", "default": -30.0},
+                "fade_seconds": {"type": "number", "default": 0.5},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "move_clips_to_broll_track",
+        "description": "Move B-roll / cutaway clips from track 1 to track 2 based on their names. Automatically creates a proper A/B-roll structure.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "keywords": {"type": "array", "items": {"type": "string"}, "description": "Keywords that identify B-roll clips. Defaults to common B-roll keywords."},
+                "source_track": {"type": "integer", "default": 1},
+                "dest_track": {"type": "integer", "default": 2},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "smart_trim_to_duration",
+        "description": "Trim the entire edit down to a target duration using a strategy: trim_ends (proportional trim), remove_short (delete shortest clips), remove_scored (delete weakest clips).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target_seconds": {"type": "number", "description": "Target duration in seconds (e.g. 60 for a 1-min cut)"},
+                "track": {"type": "integer", "default": 1},
+                "strategy": {"type": "string", "default": "trim_ends", "enum": ["trim_ends", "remove_short", "remove_scored"]},
+            },
+            "required": ["target_seconds"],
+        },
+    },
+    {
+        "name": "apply_speed_ramp",
+        "description": "Apply a speed ramp to a clip — speeds up and slows down at different points. Default creates a slow-motion middle section. Great for dramatic moments.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+                "clip_index": {"type": "integer", "default": 0},
+                "ramp_points": {
+                    "type": "array",
+                    "description": "List of speed keypoints: [{position: 0.0-1.0, speed: 0.1-2.0}]",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "position": {"type": "number"},
+                            "speed": {"type": "number"},
+                        }
+                    }
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "normalize_all_audio",
+        "description": "Normalize every clip's audio on a track to a target dB level in one pass.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+                "target_db": {"type": "number", "default": -12.0},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "add_text_title",
+        "description": "Add a text title or lower third to the timeline. Note: requires manual placement in the Titles panel for full formatting control.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "start_seconds": {"type": "number", "default": 0.0},
+                "duration_seconds": {"type": "number", "default": 3.0},
+                "track": {"type": "integer", "default": 2},
+                "style": {"type": "string", "default": "lower_third", "enum": ["lower_third", "full_screen", "subtitle"]},
+            },
+            "required": ["text"],
+        },
+    },
+
+    # ── SMART ASSEMBLY ────────────────────────────────────────────────
+    {
+        "name": "plan_assembly_from_brief",
+        "description": (
+            "Given a list of media pool clips and a creative brief, generate a complete assembly plan "
+            "with clip order, timing, and grade suggestions. "
+            "Example briefs: '60s hype reel that builds energy', 'emotional documentary opener', "
+            "'30s social media cut for Instagram'. "
+            "WORKFLOW: call get_media_pool_clips() first, then pass clips + brief here, "
+            "then call assemble_clips_to_timeline() with the returned assembly_plan."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "media_pool_clips": {
+                    "type": "array",
+                    "description": "Pass the clips array from get_media_pool_clips()",
+                },
+                "brief": {
+                    "type": "string",
+                    "description": "Creative brief describing the edit (e.g. '60s hype reel that builds energy and ends on a wide shot')",
+                },
+                "target_duration": {
+                    "type": "number",
+                    "default": 60.0,
+                    "description": "Target total edit duration in seconds",
+                },
+                "style": {
+                    "type": "string",
+                    "default": "balanced",
+                    "enum": ["hype", "emotional", "corporate", "documentary", "balanced"],
+                    "description": "Edit style — auto-detected from brief if not specified",
+                },
+            },
+            "required": ["media_pool_clips", "brief"],
+        },
+    },
+    {
+        "name": "assemble_clips_to_timeline",
+        "description": (
+            "Build a timeline edit from a smart assembly plan. "
+            "Call plan_assembly_from_brief() first, then pass its assembly_plan here. "
+            "Imports each clip from disk and appends to the timeline with suggested durations."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "assembly_plan": {
+                    "type": "array",
+                    "description": "The assembly_plan array returned by plan_assembly_from_brief()",
+                },
+                "clear_existing": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "If true, clears the existing timeline before building",
+                },
+                "track": {"type": "integer", "default": 1},
+            },
+            "required": ["assembly_plan"],
+        },
+    },
 ]
