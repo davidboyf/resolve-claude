@@ -10,9 +10,26 @@ import base64
 from typing import Optional
 
 
-def _to_base64_jpeg(path: str) -> str:
-    with open(path, "rb") as f:
-        return base64.b64encode(f.read()).decode()
+def _to_base64_jpeg(path: str, max_bytes: int = 4_000_000) -> str:
+    """Load image, compress until under max_bytes, return base64."""
+    from PIL import Image
+    import io
+    img = Image.open(path).convert("RGB")
+    # Downscale if very large
+    max_dim = 1920
+    if img.width > max_dim or img.height > max_dim:
+        img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+    # Try progressively lower quality until under limit
+    for quality in (75, 60, 45, 30):
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        if buf.tell() <= max_bytes:
+            return base64.b64encode(buf.getvalue()).decode()
+    # Last resort: shrink dimensions too
+    img.thumbnail((1280, 720), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=25, optimize=True)
+    return base64.b64encode(buf.getvalue()).decode()
 
 
 def capture_screen(window_only: bool = False) -> dict:
@@ -154,9 +171,7 @@ def load_image_as_base64(path_or_url: str) -> dict:
             ".gif": "image/gif",
         }.get(ext, "image/jpeg")
 
-        data = _to_base64_jpeg(path) if ext in (".jpg", ".jpeg") else base64.b64encode(
-            open(path, "rb").read()
-        ).decode()
+        data = _to_base64_jpeg(path)
 
         return {
             "image_base64": data,

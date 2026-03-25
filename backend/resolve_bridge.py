@@ -1332,3 +1332,285 @@ def match_color_to_clip(
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+# ─────────────────────────────────────────────
+#  REAL EDITOR TOOLS
+# ─────────────────────────────────────────────
+
+def trim_clip_start(track: int = 1, clip_index: int = 0, trim_seconds: float = 0.0) -> dict:
+    """Trim the start (in-point) of a clip by trim_seconds. Positive = trim inward, negative = extend."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+    clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index >= len(clips):
+        return {"error": "Clip not found"}
+    clip = clips[clip_index]
+    frames = int(trim_seconds * fps)
+    try:
+        ok = clip.TrimLeft(frames)
+        return {"success": bool(ok), "clip": clip.GetName(), "trimmed_seconds": trim_seconds}
+    except Exception:
+        # Fallback: set left offset
+        try:
+            current = clip.GetLeftOffset()
+            clip.SetLeftOffset(current + frames)
+            return {"success": True, "clip": clip.GetName(), "trimmed_seconds": trim_seconds}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+
+def trim_clip_end(track: int = 1, clip_index: int = 0, trim_seconds: float = 0.0) -> dict:
+    """Trim the end (out-point) of a clip by trim_seconds. Positive = trim inward, negative = extend."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+    clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index >= len(clips):
+        return {"error": "Clip not found"}
+    clip = clips[clip_index]
+    frames = int(trim_seconds * fps)
+    try:
+        ok = clip.TrimRight(frames)
+        return {"success": bool(ok), "clip": clip.GetName(), "trimmed_seconds": trim_seconds}
+    except Exception:
+        try:
+            current = clip.GetRightOffset()
+            clip.SetRightOffset(current + frames)
+            return {"success": True, "clip": clip.GetName(), "trimmed_seconds": trim_seconds}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+
+def ripple_delete_clip(track: int = 1, clip_index: int = 0) -> dict:
+    """Delete a clip and close the gap (ripple delete)."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index >= len(clips):
+        return {"error": "Clip not found"}
+    clip = clips[clip_index]
+    name = clip.GetName()
+    start = clip.GetStart()
+    end = clip.GetEnd()
+    fps = _fps(timeline)
+    try:
+        ok = timeline.DeleteClips([clip], True)  # True = ripple
+        return {"success": bool(ok), "deleted": name, "start": start/fps, "end": end/fps}
+    except Exception:
+        ok = timeline.DeleteClips([clip])
+        return {"success": bool(ok), "deleted": name, "note": "Deleted without ripple"}
+
+
+def move_clip_to_position(track: int = 1, clip_index: int = 0, new_start_seconds: float = 0.0) -> dict:
+    """Move a clip to a new start position on the timeline."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+    clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index >= len(clips):
+        return {"error": "Clip not found"}
+    clip = clips[clip_index]
+    new_frame = int(new_start_seconds * fps) + timeline.GetStartFrame()
+    try:
+        ok = clip.SetStart(new_frame)
+        return {"success": bool(ok), "clip": clip.GetName(), "new_start": new_start_seconds}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def cut_clips_at_beats(beat_times: list, track: int = 1) -> dict:
+    """Place razor cuts at all beat timestamps. Provide beat_times as list of seconds."""
+    results = []
+    for t in beat_times:
+        r = split_clip_at(t, track)
+        results.append({"time": t, "success": r.get("success", False)})
+    cuts_made = sum(1 for r in results if r["success"])
+    return {
+        "success": True,
+        "cuts_made": cuts_made,
+        "total_beats": len(beat_times),
+        "results": results,
+    }
+
+
+def auto_rough_cut(track: int = 1, target_duration_seconds: float = 3.0) -> dict:
+    """Trim all clips on a track to a target duration (rough cut pass)."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+    clips = timeline.GetItemListInTrack("video", track) or []
+    trimmed = []
+    for clip in clips:
+        dur = clip.GetDuration() / fps
+        if dur > target_duration_seconds:
+            excess = dur - target_duration_seconds
+            try:
+                clip.SetRightOffset(clip.GetRightOffset() + int(excess * fps))
+                trimmed.append({"clip": clip.GetName(), "original_duration": dur, "new_duration": target_duration_seconds})
+            except Exception:
+                pass
+    return {"success": True, "trimmed": len(trimmed), "target_duration": target_duration_seconds, "clips": trimmed}
+
+
+def reorder_clips(track: int = 1, new_order: list = None) -> dict:
+    """Reorder clips on a track by providing a list of clip names in desired order."""
+    if not new_order:
+        return {"error": "new_order list is required"}
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+    clips = timeline.GetItemListInTrack("video", track) or []
+    clip_map = {c.GetName(): c for c in clips}
+    # Get durations sorted by desired order
+    cursor = timeline.GetStartFrame()
+    moved = []
+    for name in new_order:
+        if name in clip_map:
+            clip = clip_map[name]
+            dur = clip.GetDuration()
+            try:
+                clip.SetStart(cursor)
+                moved.append(name)
+                cursor += dur
+            except Exception:
+                pass
+    return {"success": True, "reordered": moved}
+
+
+def add_beats_as_markers(beat_times: list, color: str = "Yellow") -> dict:
+    """Add timeline markers at every beat position."""
+    results = []
+    for i, t in enumerate(beat_times):
+        r = add_marker(t, color, f"Beat {i+1}", "")
+        results.append({"beat": i+1, "time": t, "success": r.get("success", False)})
+    return {"success": True, "markers_added": sum(1 for r in results if r["success"]), "total": len(beat_times)}
+
+
+def set_jl_cut(track: int = 1, clip_index: int = 0, audio_lead_seconds: float = 0.5) -> dict:
+    """Create a J-cut: audio from next clip starts before the video cut."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+    audio_clips = timeline.GetItemListInTrack("audio", track) or []
+    video_clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index + 1 >= len(audio_clips):
+        return {"error": "No next audio clip found"}
+    next_audio = audio_clips[clip_index + 1]
+    frames = int(audio_lead_seconds * fps)
+    try:
+        current_offset = next_audio.GetLeftOffset()
+        next_audio.SetLeftOffset(max(0, current_offset - frames))
+        return {"success": True, "audio_lead_seconds": audio_lead_seconds, "type": "J-cut"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def normalize_clip_audio(track: int = 1, clip_index: int = 0, target_db: float = -12.0) -> dict:
+    """Set a clip's audio level to a target dB value."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    clips = timeline.GetItemListInTrack("video", track) or []
+    if clip_index >= len(clips):
+        return {"error": "Clip not found"}
+    clip = clips[clip_index]
+    try:
+        # Volume is in dB — convert to linear for Resolve's Volume property
+        import math
+        linear = 10 ** (target_db / 20.0)
+        clip.SetProperty("Volume", linear)
+        return {"success": True, "clip": clip.GetName(), "target_db": target_db, "linear": linear}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def apply_cross_dissolve_all(track: int = 1, duration_seconds: float = 0.5) -> dict:
+    """Apply cross dissolve transitions between all clips on a track."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+    clips = timeline.GetItemListInTrack("video", track) or []
+    added = 0
+    for i in range(len(clips) - 1):
+        clip = clips[i]
+        cut_point = clip.GetEnd() / fps
+        r = add_transition(cut_point, "Cross Dissolve", duration_seconds, track)
+        if r.get("success"):
+            added += 1
+    return {"success": True, "transitions_added": added, "total_cuts": len(clips) - 1}
+
+
+def detect_and_cut_silence(track: int = 1, min_silence_db: float = -50.0, min_duration_seconds: float = 0.5) -> dict:
+    """
+    Scan audio on track and mark silent regions. Returns timestamps of silence for review.
+    Note: actual silence cutting requires the Fairlight API or manual review of markers.
+    """
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+    clips = timeline.GetItemListInTrack("audio", track) or []
+    # Flag clips that are very short (likely silence/dead air)
+    flagged = []
+    for clip in clips:
+        dur = clip.GetDuration() / fps
+        if dur < min_duration_seconds:
+            flagged.append({"name": clip.GetName(), "start": clip.GetStart()/fps, "duration": dur})
+            add_marker(clip.GetStart()/fps, "Red", "Silence", f"Short clip {dur:.2f}s")
+    return {
+        "success": True,
+        "flagged_clips": len(flagged),
+        "clips": flagged,
+        "note": "Red markers added at silent/short clips for review",
+    }
+
+
+def color_grade_all_clips(track: int = 1, contrast: float = 1.05, saturation: float = 0.95,
+                           lift_r: float = 0.0, lift_g: float = 0.0, lift_b: float = 0.02,
+                           gain_r: float = 0.01, gain_g: float = 0.0, gain_b: float = -0.01) -> dict:
+    """Apply a consistent color grade to ALL clips on a track — great for a whole-timeline look."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    clips = timeline.GetItemListInTrack("video", track) or []
+    graded = 0
+    for i, clip in enumerate(clips):
+        try:
+            set_contrast_saturation(contrast, saturation, track, i)
+            apply_color_wheel("lift", lift_r, lift_g, lift_b, 0.0, track, i)
+            apply_color_wheel("gain", gain_r, gain_g, gain_b, 0.0, track, i)
+            graded += 1
+        except Exception:
+            pass
+    return {"success": True, "clips_graded": graded, "total": len(clips)}
+
+
+def create_multicam_cut(clips_per_second: float = 1.0, track: int = 1) -> dict:
+    """Create rapid multicam-style cuts by splitting every clip into equal segments."""
+    resolve = _get_resolve()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    timeline = project.GetCurrentTimeline()
+    fps = _fps(timeline)
+    clips = timeline.GetItemListInTrack("video", track) or []
+    segment_duration = 1.0 / clips_per_second
+    cuts_made = 0
+    for clip in clips:
+        start = clip.GetStart() / fps
+        end = clip.GetEnd() / fps
+        t = start + segment_duration
+        while t < end - 0.1:
+            r = split_clip_at(t, track)
+            if r.get("success"):
+                cuts_made += 1
+            t += segment_duration
+    return {"success": True, "cuts_made": cuts_made, "segment_duration": segment_duration}

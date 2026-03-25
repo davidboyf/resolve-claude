@@ -17,8 +17,9 @@ echo "📡 Starting Python backend on :8765..."
 cd backend
 if [ ! -d "venv" ]; then
   echo "🔧 Creating Python venv..."
-  python3 -m venv venv
+  /opt/homebrew/bin/python3.11 -m venv venv
   source venv/bin/activate
+  pip install --upgrade pip setuptools -q
   pip install -r requirements.txt -q
 else
   source venv/bin/activate

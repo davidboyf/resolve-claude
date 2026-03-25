@@ -1,0 +1,35 @@
+{
+  "name": "resolve-claude",
+  "version": "1.0.0",
+  "description": "Claude × DaVinci Resolve — AI editing assistant",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "build": "cd frontend && npm run build",
+    "dist": "npm run build && electron-builder",
+    "setup": "cd backend && /opt/homebrew/bin/python3.11 -m venv venv && venv/bin/pip install --upgrade pip setuptools && venv/bin/pip install -r requirements.txt"
+  },
+  "build": {
+    "appId": "com.resolve.claude",
+    "productName": "Claude × Resolve",
+    "mac": {
+      "category": "public.app-category.video",
+      "icon": "electron/icon.icns"
+    },
+    "files": [
+      "electron/**",
+      "frontend/dist/**",
+      "backend/**",
+      "!backend/venv/**",
+      "!backend/__pycache__/**"
+    ],
+    "extraResources": [
+      { "from": "backend", "to": "backend", "filter": ["**/*", "!venv/**", "!__pycache__/**"] }
+    ]
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  }
+}

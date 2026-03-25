@@ -32,47 +32,47 @@ def extract_audio(video_path: str, output_path: Optional[str] = None) -> str:
 
 def transcribe(video_path: str, language: str = "en", model_size: str = "base") -> dict:
     """
-    Transcribe a video file using OpenAI Whisper.
+    Transcribe a video file using faster-whisper.
     Returns dict with full text and timestamped segments.
     """
-    import whisper
+    from faster_whisper import WhisperModel
 
     # Extract audio first
     audio_path = extract_audio(video_path)
 
     try:
-        model = whisper.load_model(model_size)
-        result = model.transcribe(
+        model = WhisperModel(model_size, device="cpu", compute_type="int8")
+        segs, info = model.transcribe(
             audio_path,
             language=language,
             word_timestamps=True,
-            verbose=False,
         )
 
         segments = []
-        for seg in result.get("segments", []):
+        full_text_parts = []
+        for seg in segs:
+            words = []
+            for w in (seg.words or []):
+                words.append({
+                    "word": w.word.strip(),
+                    "start": round(w.start, 2),
+                    "end": round(w.end, 2),
+                })
             segments.append({
-                "start": round(seg["start"], 2),
-                "end": round(seg["end"], 2),
-                "text": seg["text"].strip(),
-                "words": [
-                    {
-                        "word": w["word"].strip(),
-                        "start": round(w["start"], 2),
-                        "end": round(w["end"], 2),
-                    }
-                    for w in seg.get("words", [])
-                ],
+                "start": round(seg.start, 2),
+                "end": round(seg.end, 2),
+                "text": seg.text.strip(),
+                "words": words,
             })
+            full_text_parts.append(seg.text.strip())
 
         return {
-            "text": result["text"].strip(),
-            "language": result.get("language", language),
+            "text": " ".join(full_text_parts),
+            "language": info.language,
             "segments": segments,
             "duration": segments[-1]["end"] if segments else 0,
         }
     finally:
-        # Clean up temp audio file
         try:
             os.unlink(audio_path)
         except Exception:

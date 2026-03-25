@@ -371,4 +371,5 @@ async def delete_render_job(job_id: str):
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8765, reload=True, log_level="info")
+    port = int(os.environ.get("BACKEND_PORT", 8765))
+    uvicorn.run("main:app", host="127.0.0.1", port=port, reload=False, log_level="info")

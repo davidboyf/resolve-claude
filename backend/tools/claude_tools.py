@@ -601,4 +601,200 @@ RESOLVE_TOOLS = [
             "required": [],
         },
     },
+    # ── BEAT DETECTION & SYNC EDIT ────────────────────────────────────
+    {
+        "name": "detect_beats",
+        "description": "Analyze an audio or video file and detect beats, BPM, downbeats, and energy peaks using librosa. Returns timestamps to sync cuts to music.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "Path to the audio/music file (mp3, wav, aac) or video file with audio"},
+                "bpm_hint": {"type": "number", "description": "Optional BPM hint to improve accuracy"},
+            },
+            "required": ["file_path"],
+        },
+    },
+    {
+        "name": "cut_clips_at_beats",
+        "description": "Place razor cuts on the timeline at a list of beat timestamps. Use after detect_beats to sync cuts to music.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "beat_times": {"type": "array", "items": {"type": "number"}, "description": "List of timestamps in seconds to cut at"},
+                "track": {"type": "integer", "default": 1},
+            },
+            "required": ["beat_times"],
+        },
+    },
+    {
+        "name": "add_beats_as_markers",
+        "description": "Add yellow markers at every beat position for visual reference before cutting.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "beat_times": {"type": "array", "items": {"type": "number"}},
+                "color": {"type": "string", "default": "Yellow"},
+            },
+            "required": ["beat_times"],
+        },
+    },
+    # ── CLIP TRIMMING & RIPPLE ─────────────────────────────────────────
+    {
+        "name": "trim_clip_start",
+        "description": "Trim the in-point (start) of a clip. Positive trim_seconds removes from the start, negative extends it.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+                "clip_index": {"type": "integer", "default": 0},
+                "trim_seconds": {"type": "number", "description": "Seconds to trim from start (positive=trim in, negative=extend)"},
+            },
+            "required": ["trim_seconds"],
+        },
+    },
+    {
+        "name": "trim_clip_end",
+        "description": "Trim the out-point (end) of a clip. Positive trim_seconds removes from the end, negative extends it.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+                "clip_index": {"type": "integer", "default": 0},
+                "trim_seconds": {"type": "number", "description": "Seconds to trim from end"},
+            },
+            "required": ["trim_seconds"],
+        },
+    },
+    {
+        "name": "ripple_delete_clip",
+        "description": "Delete a clip and ripple-close the gap so subsequent clips shift left.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+                "clip_index": {"type": "integer", "default": 0},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "move_clip_to_position",
+        "description": "Move a clip to a new start position on the timeline.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+                "clip_index": {"type": "integer", "default": 0},
+                "new_start_seconds": {"type": "number", "description": "New start position in seconds"},
+            },
+            "required": ["new_start_seconds"],
+        },
+    },
+    {
+        "name": "reorder_clips",
+        "description": "Reorder clips on a track by specifying the desired order as a list of clip names.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+                "new_order": {"type": "array", "items": {"type": "string"}, "description": "Clip names in desired order"},
+            },
+            "required": ["new_order"],
+        },
+    },
+    # ── AUTO EDIT PASSES ──────────────────────────────────────────────
+    {
+        "name": "auto_rough_cut",
+        "description": "Trim all clips on a track to a target duration for a quick rough cut pass.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+                "target_duration_seconds": {"type": "number", "default": 3.0, "description": "Max duration per clip in seconds"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "create_multicam_cut",
+        "description": "Create rapid-fire cuts by splitting all clips into equal-length segments. Great for music videos and fast-paced montages.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+                "clips_per_second": {"type": "number", "default": 1.0, "description": "How many cuts per second (e.g. 2.0 = cut every 0.5s)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "apply_cross_dissolve_all",
+        "description": "Apply cross dissolve transitions between all clips on a track.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+                "duration_seconds": {"type": "number", "default": 0.5},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "detect_and_cut_silence",
+        "description": "Scan the timeline for very short or silent clips and mark them with red markers for review/deletion.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+                "min_silence_db": {"type": "number", "default": -50.0},
+                "min_duration_seconds": {"type": "number", "default": 0.5, "description": "Clips shorter than this are flagged"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "color_grade_all_clips",
+        "description": "Apply a consistent color grade (contrast, saturation, lift, gain) to ALL clips on a track at once.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+                "contrast": {"type": "number", "default": 1.05},
+                "saturation": {"type": "number", "default": 0.95},
+                "lift_r": {"type": "number", "default": 0.0},
+                "lift_g": {"type": "number", "default": 0.0},
+                "lift_b": {"type": "number", "default": 0.02},
+                "gain_r": {"type": "number", "default": 0.01},
+                "gain_g": {"type": "number", "default": 0.0},
+                "gain_b": {"type": "number", "default": -0.01},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "normalize_clip_audio",
+        "description": "Set a clip's audio level to a target dB value.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+                "clip_index": {"type": "integer", "default": 0},
+                "target_db": {"type": "number", "default": -12.0, "description": "Target level in dB (-12 for dialogue, -18 for music)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "set_jl_cut",
+        "description": "Create a J-cut: audio from the next clip starts before the video cut for a smoother transition.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "track": {"type": "integer", "default": 1},
+                "clip_index": {"type": "integer", "default": 0},
+                "audio_lead_seconds": {"type": "number", "default": 0.5},
+            },
+            "required": [],
+        },
+    },
 ]

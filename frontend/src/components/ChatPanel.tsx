@@ -7,11 +7,11 @@ import { MessageBubble } from './MessageBubble'
 import { useChat } from '../hooks/useChat'
 
 const QUICK_ACTIONS = [
-  { icon: <Film size={13} />, label: 'Analyze timeline', prompt: 'Analyze my timeline and give me a summary of all clips, their durations, and any issues you notice.' },
-  { icon: <Scissors size={13} />, label: 'Auto-cut silences', prompt: 'Look at my timeline and mark any clips that appear to be just silence, dead air, or very short unusable clips with Red markers labeled "Cut".' },
-  { icon: <Palette size={13} />, label: 'Cinematic grade', prompt: 'Apply a cinematic color grade to the first clip on track 1: lift the shadows slightly blue, add warmth to the highlights, boost contrast to 1.1, and reduce saturation slightly to 0.9.' },
-  { icon: <Volume2 size={13} />, label: 'Balance audio', prompt: 'Check my audio tracks and set them to appropriate broadcast levels (-12 dB for dialogue, -18 dB for music if present).' },
-  { icon: <Zap size={13} />, label: 'Best moments', prompt: 'Review my timeline and add Green markers labeled "Keep" at timestamps you think represent the strongest or most interesting moments based on clip names and lengths.' },
+  { icon: <Film size={13} />, label: 'Analyze timeline', prompt: 'Analyze my timeline like a real editor. Tell me about pacing, clip durations, any dead air, and what you would change first.' },
+  { icon: <Scissors size={13} />, label: 'Rough cut', prompt: 'Do a rough cut pass: trim all clips on track 1 to 3 seconds max, flag dead air with red markers, then tell me what you changed.' },
+  { icon: <Palette size={13} />, label: 'Cinematic grade all', prompt: 'Apply a cinematic grade to ALL clips on track 1: blue shadows (lift_b +0.03), warm highlights (gain_r +0.02, gain_b -0.02), contrast 1.08, saturation 0.92.' },
+  { icon: <Volume2 size={13} />, label: 'Balance audio', prompt: 'Normalize audio on all clips: dialogue to -12 dB, music to -18 dB. Check each track and tell me what you adjusted.' },
+  { icon: <Zap size={13} />, label: 'Cut to beat', prompt: 'I want to sync my cuts to music. Give me the full file path of your music track (e.g. /Users/you/Music/track.mp3) and I will detect the beats and cut your timeline to the rhythm.' },
 ]
 
 const MODELS = [
